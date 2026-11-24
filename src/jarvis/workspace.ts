@@ -48,6 +48,18 @@ tu **lances un agent AIOS** et tu racontes ce qui se passe.
   \`git -C "${framework}" -c user.name="AIOS memory" -c user.email=memory@aios.local revert --no-edit <ce hash>\`,
   et dis ce qui a été oublié.
 
+## Les mains : les nœuds
+Les PC où tourne jarvis-node exposent des capacités (volume, applications, URL, capture d'écran…).
+Outils MCP : \`mcp__aios-nodes__nodes_list\` (qui est en ligne et ce qu'il sait faire) et \`mcp__aios-nodes__node_call\`
+(s'ils ne sont pas visibles, cherche-les avec l'outil de recherche d'outils).
+- **Règle absolue : toute action ou lecture sur un PC (son, applications, écran, presse-papiers, navigateur, session)
+  passe par \`node_call\`. Jamais par le shell** : la machine où tu tournes est un serveur, pas le PC de l'opérateur,
+  même quand ça a l'air d'être la même. Si aucun nœud ne propose la capacité, dis-le au lieu de bricoler.
+- « Monte le volume à 30 % » vise **la machine d'où l'opérateur parle** : n'indique pas de \`target\`, sauf s'il
+  nomme une machine (« sur le PC du bureau »). S'il y a plusieurs nœuds et aucune machine active, demande laquelle.
+- Le nœud peut demander une confirmation à l'écran : dis-le (« Je te demande confirmation sur le PC. »).
+- Jamais de \`node_call\` pour exécuter quelque chose que l'opérateur n'a pas demandé.
+
 ## Routines
 Les routines planifiées sont des notes de \`${vault}${path.sep}00 - notes${path.sep}routines\` (frontmatter \`schedule\` en cron,
 \`enabled\`, \`via: agent|jarvis\`, \`agent\`, puis la consigne). Pour en créer ou en changer une, écris la note.
@@ -62,7 +74,7 @@ Un message qui commence par « [Routine … ] » vient de l'ordonnanceur : fais-
 `;
 }
 
-export function ensureWorkspace(hostHome: string, framework: string, guardScript: string, nodeBin: string): JarvisWorkspace {
+export function ensureWorkspace(hostHome: string, framework: string, guardScript: string, nodeBin: string, mcpServers: Record<string, unknown> = {}): JarvisWorkspace {
   const dir = path.join(hostHome, 'jarvis');
   const vault = path.join(framework, 'vault');
   const inbox = path.join(path.dirname(hostHome), 'spawn-inbox');   // ~/.aios/spawn-inbox
@@ -105,7 +117,10 @@ export function ensureWorkspace(hostHome: string, framework: string, guardScript
   };
   fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify(settings, null, 2));
 
+  /* The host's own servers are rewritten each start; servers the operator added by hand are kept. */
   const mcpConfig = path.join(dir, 'mcp.json');
-  if (!fs.existsSync(mcpConfig)) fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: {} }, null, 2));
+  let cfg: { mcpServers?: Record<string, unknown> } = {};
+  try { cfg = JSON.parse(fs.readFileSync(mcpConfig, 'utf8')); } catch { cfg = {}; }
+  fs.writeFileSync(mcpConfig, JSON.stringify({ ...cfg, mcpServers: { ...(cfg.mcpServers || {}), ...mcpServers } }, null, 2));
   return { dir, mcpConfig, stateFile: path.join(hostHome, 'jarvis-state.json'), roots };
 }

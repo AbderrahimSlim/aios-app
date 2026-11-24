@@ -72,7 +72,7 @@ async function start(): Promise<void> {
   require('../main/main');
   setImmediate(() => app.markReady());
 
-  let jarvis: { ask(text: string): void } | undefined;
+  let jarvis: import('../jarvis/host').JarvisApi | undefined;
   /* Jarvis: the voice conductor (AIOS_JARVIS=0 to leave it off). */
   if (process.env.AIOS_JARVIS !== '0') {
     try {
@@ -80,7 +80,20 @@ async function start(): Promise<void> {
       const roots = (await ipcMain.handlers.get('fs:roots')?.({ sender: null })) as { framework?: string | null } | undefined;
       if (roots?.framework) {
         const { startJarvis } = await import('../jarvis/host');
-        jarvis = startJarvis({ hostHome: HOST_HOME, framework: roots.framework, broadcast: emitAll });
+        jarvis = startJarvis({
+          hostHome: HOST_HOME, framework: roots.framework, broadcast: emitAll,
+          listNodes: () => gw.nodes.list().map((n) => ({ id: n.id, machine: n.machine, capabilities: n.capabilities.length })),
+          mcpServers: {
+            'aios-nodes': {
+              command: process.execPath,
+              args: [path.join(__dirname, '..', 'jarvis', 'nodesMcp.js')],
+              env: { AIOS_HOST_PORT: String(port), AIOS_INTERNAL_TOKEN_FILE: path.join(HOST_HOME, 'internal.token'), AIOS_SCREENS_DIR: path.join(roots.framework, 'vault', '02 - assets', 'generated', 'screens') },
+            },
+          },
+        });
+        const j = jarvis;
+        gw.nodes.activeMachine = () => j.activeMachine();
+        gw.nodes.onChange = () => j.nodesChanged();
       } else console.warn('[jarvis] not started: no AIOS framework found');
     } catch (e) { console.error('[jarvis] failed to start:', e); }
   }

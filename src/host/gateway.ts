@@ -16,6 +16,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { DeviceStore, parseCookies } from './auth';
 import { FakeWebContents, ipcMain, setBroadcast } from './electronShim';
 import { ProxyPty, PtyBridge } from './ptyBridge';
+import { NodeBroker } from './nodes';
 import { asClientMsg, decode, encode, HostMsg, LIMITS, PROTOCOL_VERSION } from './protocol';
 
 const COOKIE = 'aios_host';
@@ -148,10 +149,23 @@ export class Gateway {
   private seq = 0;
   private server!: http.Server;
   private readonly router: PtyRouter;
+  /** Nodes (PCs running jarvis-node) and their capability requests. */
+  readonly nodes = new NodeBroker();
+  /** Token of the loopback-only /internal API (file readable by the operator only). */
+  readonly internalToken: string;
   /** The client that acted last: the one a bus request opens its pane in (never every client). */
   private active: Client | null = null;
 
   constructor(private readonly opts: GatewayOptions, private readonly bridge: PtyBridge) {
+    /* In the constructor, not a field initializer: those run before `opts` is assigned (ES2022 class fields). */
+    this.internalToken = (() => {
+      const f = path.join(opts.home, 'internal.token');
+      try { return fs.readFileSync(f, 'utf8').trim(); } catch { /* create */ }
+      const t = crypto.randomBytes(32).toString('hex');
+      fs.mkdirSync(opts.home, { recursive: true });
+      fs.writeFileSync(f, t, { mode: 0o600 });
+      return t;
+    })();
     this.devices = new DeviceStore(opts.home);
     const toAll = (ch: string, a: unknown[]) => { for (const c of this.clients) this.emit(c, ch, a); };
     /* Bus requests (open / send to / close a session) go to ONE client, or are fulfilled here when no
@@ -188,8 +202,19 @@ export class Gateway {
   start(): Promise<void> {
     this.server = http.createServer((req, res) => { void this.http(req, res); });
     const wss = new WebSocketServer({ noServer: true, maxPayload: LIMITS.maxFrameBytes });
+    const nodeWss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
     this.server.on('upgrade', (req, socket, head) => {
-      const device = this.devices.verify(parseCookies(req.headers.cookie)[COOKIE]);
+      /* A NODE (jarvis-node on a PC): bearer credential of a device paired with the role `node`, and no
+         Origin at all — a browser always sends one, so no web page can pose as a node. */
+      if (req.url === '/node') {
+        const bearer = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ''))?.[1];
+        const node = this.devices.verify(bearer);
+        if (!node || node.role !== 'node' || req.headers.origin) { socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return; }
+        nodeWss.handleUpgrade(req, socket, head, (ws) => { this.devices.touch(node.id); this.nodes.attach(ws, node.id, node.name); });
+        return;
+      }
+      const found = this.devices.verify(parseCookies(req.headers.cookie)[COOKIE]);
+      const device = found && found.role !== 'node' ? found : null;
       const origin = String(req.headers.origin || '');
       let originHost = '';
       try { originHost = new URL(origin).host; } catch { /* no or bad origin */ }
@@ -344,7 +369,16 @@ export class Gateway {
         try { ok = new URL(origin).host === req.headers.host; } catch { ok = false; }
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 4096) break; }
-        const code = new URLSearchParams(body).get('code') || '';
+        const form = new URLSearchParams(body);
+        const code = form.get('code') || '';
+        /* A node pairs from a program: role=node and NO Origin (a browser always sends one). It gets its
+           credential as JSON instead of a cookie. */
+        if (form.get('role') === 'node') {
+          const cred = !req.headers.origin ? this.devices.pair(code, String(form.get('machine') || 'node').slice(0, 64), 'node') : null;
+          res.writeHead(cred ? 200 : 403, { ...headers, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(cred ? { credential: cred } : { error: this.devices.locked() ? 'locked: too many attempts' : 'invalid or expired code' }));
+          return;
+        }
         const cookie = ok ? this.devices.pair(code, String(req.headers['user-agent'] || 'browser')) : null;
         if (!cookie) {
           res.writeHead(403, { ...headers, 'Content-Type': MIME['.html'] });
@@ -363,7 +397,13 @@ export class Gateway {
       return;
     }
 
-    if (!this.devices.verify(parseCookies(req.headers.cookie)[COOKIE])) {
+    /* Loopback-only API for host-side tools (the aios-nodes MCP server Jarvis uses), with a token file
+       only the operator can read. Never reachable through tailscale serve: that arrives with a Host
+       header naming the tailnet, and the token is required anyway. */
+    if (url.pathname === '/internal/nodes') return this.internalNodes(req, res, headers);
+
+    const viewer = this.devices.verify(parseCookies(req.headers.cookie)[COOKIE]);
+    if (!viewer || viewer.role === 'node') {
       res.writeHead(302, { ...headers, Location: '/pair' });
       res.end();
       return;
@@ -416,6 +456,25 @@ export class Gateway {
     const sandbox = ext === '.html' || ext === '.htm' || ext === '.svg' ? { 'Content-Security-Policy': 'sandbox' } : {};
     res.writeHead(200, { ...headers, ...sandbox, 'Content-Type': type, 'Content-Length': st.size });
     fs.createReadStream(real).pipe(res);
+  }
+
+  private async internalNodes(req: http.IncomingMessage, res: http.ServerResponse, headers: Record<string, string>): Promise<void> {
+    const remote = String(req.socket.remoteAddress || '');
+    const given = Buffer.from(String(req.headers['x-aios-internal'] || ''));
+    const want = Buffer.from(this.internalToken);
+    const okToken = given.length === want.length && crypto.timingSafeEqual(given, want);
+    if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(remote) || !isLoopbackHost(req.headers.host) || !okToken || req.method !== 'POST') {
+      res.writeHead(403, headers); res.end(); return;
+    }
+    let body = '';
+    for await (const chunk of req) { body += chunk; if (body.length > 128 * 1024) { res.writeHead(413, headers); res.end(); return; } }
+    let m: { op?: string; capability?: string; args?: Record<string, unknown>; target?: string; id?: string };
+    try { m = JSON.parse(body); } catch { res.writeHead(400, headers); res.end(); return; }
+    const reply = (v: unknown) => { res.writeHead(200, { ...headers, 'Content-Type': 'application/json' }); res.end(JSON.stringify(v)); };
+    if (m.op === 'list') return reply({ nodes: this.nodes.list(), queue: this.nodes.queue(), activeMachine: this.nodes.activeMachine() });
+    if (m.op === 'cancel' && m.id) return reply({ ok: this.nodes.cancel(m.id) });
+    if (m.op === 'call' && m.capability) return reply(await this.nodes.call(String(m.capability), m.args || {}, m.target ? String(m.target) : null));
+    res.writeHead(400, headers); res.end();
   }
 
   private text(res: http.ServerResponse, type: string, body: string): void {

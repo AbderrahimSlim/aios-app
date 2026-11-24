@@ -120,3 +120,14 @@ connected page: with no page open, the request waits (headless fulfilment is pla
   last looked (`~/.aios/host/activity.jsonl`).
 - **`jarvis-mobile`** (opt-in, `"mobileSession": true` in `jarvis.json`): a session kept alive for the
   Claude app's Remote Control.
+
+## Nodes: Jarvis's hands on a PC (plan phase 4)
+
+A PC running [jarvis-node](../../jarvis-node) (separate repository, CC BY-NC) pairs with the role
+`node` (`POST /pair` with `role=node` and no `Origin`), connects outbound to `/node` with its bearer
+credential, and declares typed capabilities. The broker (`src/host/nodes.ts`, RFC §5.5) validates
+arguments against each capability's schema, routes the call (the machine the speaking device runs on, set
+in the Jarvis panel; else the only node online; else it asks), and records queued → leased → done / failed /
+cancelled / unknown, with deadlines; a node dropping mid-call re-queues repeatable capabilities only.
+Jarvis reaches it through the `aios-nodes` MCP server (`src/jarvis/nodesMcp.ts`) over the loopback-only,
+token-guarded `/internal/nodes`. Screen captures land in `vault/02 - assets/generated/screens/`.

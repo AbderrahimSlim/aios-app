@@ -30,13 +30,14 @@
   const mic = el('button', { id: 'jarvis-mic', title: 'Micro' }, '🎙');
   const stopBtn = el('button', { title: 'Stop' }, '■');
   const stateEl = el('span', { class: 'jv-state' }, '');
+  const machineSel = el('select', { 'aria-label': 'Machine de cet appareil' });
   const echoBox = el('input', { type: 'checkbox' });
   echoBox.checked = antiEcho;
   echoBox.addEventListener('change', () => { antiEcho = echoBox.checked; localStorage.setItem('jarvis.antiEcho', antiEcho ? '1' : '0'); });
   const panel = el('div', { id: 'jarvis-panel', role: 'dialog', 'aria-label': 'Jarvis' },
     el('header', {}, 'Jarvis', stateEl, el('button', { title: 'Nouvelle conversation', onclick: () => { if (confirm('Nouvelle conversation avec Jarvis ?')) void ipc.invoke('jarvis:reset'); } }, '↺')),
     log,
-    el('div', { class: 'jv-opts' }, el('label', {}, echoBox, ' anti-écho (casque : décocher pour couper Jarvis en parlant)')),
+    el('div', { class: 'jv-opts' }, el('label', {}, echoBox, ' anti-écho'), el('label', { title: 'Les actions sur un PC (volume, applications…) visent cette machine' }, 'cet appareil : ', machineSel)),
     el('footer', {}, input, mic, stopBtn));
   const link = el('link', { rel: 'stylesheet', href: '/web/jarvis.css' });
   document.head.append(link);
@@ -55,6 +56,21 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const t = input.value.trim(); if (t) { input.value = ''; void ipc.invoke('jarvis:say', t); } }
   });
   stopBtn.addEventListener('click', () => { stopAudio(); void ipc.invoke('jarvis:interrupt'); });
+
+  /* Which PC this page runs on: node actions (volume, apps…) go to it when the operator speaks from here. */
+  async function refreshMachines() {
+    let list = [];
+    try { list = await ipc.invoke('jarvis:nodes'); } catch { list = []; }
+    const saved = localStorage.getItem('jarvis.machine') || '';
+    machineSel.textContent = '';
+    machineSel.append(el('option', { value: '' }, '— aucun PC —'));
+    const names = new Set(list.map((n) => n.machine));
+    if (saved) names.add(saved);
+    for (const m of names) { const o = el('option', { value: m }, m + (list.some((n) => n.machine === m) ? '' : ' (hors ligne)')); if (m === saved) o.selected = true; machineSel.append(o); }
+    void ipc.invoke('jarvis:setMachine', saved);
+  }
+  machineSel.addEventListener('change', () => { localStorage.setItem('jarvis.machine', machineSel.value); void ipc.invoke('jarvis:setMachine', machineSel.value); });
+  void refreshMachines();
 
   // ── audio out ───────────────────────────────────────────────────────────────────────────────
   let playCtx = null, nextAt = 0;
@@ -150,6 +166,7 @@
       case 'interrupted': stopAudio(); add('jv-tool', 'interrompu'); break;
       case 'reset': log.textContent = ''; current = null; break;
       case 'error': add('jv-error', ev.text); break;
+      case 'nodes': void refreshMachines(); break;
     }
   });
 

@@ -8,7 +8,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-export interface Device { id: string; name: string; hash: string; createdAt: number; lastSeen: number; }
+/** A paired device. `role` (RFC §7): a client opens the UI; a node only registers capabilities. Missing = client. */
+export interface Device { id: string; name: string; hash: string; createdAt: number; lastSeen: number; role?: 'client' | 'node'; }
 interface PairingCode { hash: string; expiresAt: number; }
 
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -64,7 +65,7 @@ export class DeviceStore {
   }
 
   /** Spend a code: returns the new device's cookie value (`id.secret`), or null. */
-  pair(rawCode: string, name: string): string | null {
+  pair(rawCode: string, name: string, role: 'client' | 'node' = 'client'): string | null {
     if (this.locked()) return null;
     const code = String(rawCode || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     const now = Date.now();
@@ -77,7 +78,7 @@ export class DeviceStore {
     const id = crypto.randomBytes(6).toString('hex');
     const secret = crypto.randomBytes(32).toString('hex');
     const devices = this.list();
-    devices.push({ id, name: String(name || 'browser').slice(0, 120), hash: sha256(secret), createdAt: now, lastSeen: now });
+    devices.push({ id, name: String(name || 'browser').slice(0, 120), hash: sha256(secret), createdAt: now, lastSeen: now, role });
     writePrivate(this.devicesFile, devices);
     return `${id}.${secret}`;
   }

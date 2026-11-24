@@ -30,11 +30,11 @@ export function loadVoiceConfig(hostHome: string): VoiceConfig {
   return cfg;
 }
 
-export interface JarvisApi { ask(text: string): void; }
+export interface JarvisApi { ask(text: string): void; activeMachine(): string | null; nodesChanged(): void; }
 
-export function startJarvis(opts: { hostHome: string; framework: string; broadcast: (ch: string, a: unknown[]) => void }): JarvisApi {
+export function startJarvis(opts: { hostHome: string; framework: string; broadcast: (ch: string, a: unknown[]) => void; mcpServers?: Record<string, unknown>; listNodes?: () => unknown[] }): JarvisApi {
   const guardScript = path.join(__dirname, 'guard.js');
-  const ws = ensureWorkspace(opts.hostHome, opts.framework, guardScript, process.execPath);
+  const ws = ensureWorkspace(opts.hostHome, opts.framework, guardScript, process.execPath, opts.mcpServers || {});
   const voice = loadVoiceConfig(opts.hostHome);
   const conductor = new Conductor({ workspace: ws.dir, addDirs: [opts.framework, ws.roots[2]], stateFile: ws.stateFile, mcpConfig: ws.mcpConfig });
   const history: Entry[] = [];
@@ -43,6 +43,8 @@ export function startJarvis(opts: { hostHome: string; framework: string; broadca
   let tts: GradiumTts | null = null;
   let reply = '';
   const mics = new Map<FakeWebContents, GradiumStt>();
+  /* Which machine each page runs on (chosen in the Jarvis panel): node calls go to the active one. */
+  const machineOf = new Map<FakeWebContents, string>();
 
   const note = (e: Entry) => { history.push(e); if (history.length > 200) history.shift(); };
   const toAll = (ev: Record<string, unknown>) => opts.broadcast('jarvis:event', [ev]);
@@ -101,6 +103,13 @@ export function startJarvis(opts: { hostHome: string; framework: string; broadca
   }));
   ipcMain.handle('jarvis:say', (e: { sender: FakeWebContents }, text: string) => { utter(e.sender, String(text || '').slice(0, 8000)); return true; });
   ipcMain.handle('jarvis:interrupt', (e: { sender: FakeWebContents }) => { active = e.sender; shutUp(); conductor.interrupt(); return true; });
+  ipcMain.handle('jarvis:setMachine', (e: { sender: FakeWebContents }, machine: string) => {
+    const m = String(machine || '').slice(0, 64);
+    if (m) machineOf.set(e.sender, m); else machineOf.delete(e.sender);
+    e.sender.once('destroyed', () => machineOf.delete(e.sender));
+    return true;
+  });
+  ipcMain.handle('jarvis:nodes', () => (opts.listNodes ? opts.listNodes() : []));
   ipcMain.handle('jarvis:reset', () => { shutUp(); conductor.reset(); history.length = 0; toAll({ type: 'reset' }); return true; });
 
   /* Microphone (gradium engine): the page streams 24 kHz PCM; the host recognises it. */
@@ -121,6 +130,8 @@ export function startJarvis(opts: { hostHome: string; framework: string; broadca
   const api: JarvisApi = {
     /* A routine or the host speaks to Jarvis: the answer goes to whichever device is active. */
     ask(text: string) { note({ role: 'user', text, at: Date.now() }); toAll({ type: 'user', text }); conductor.send(text); },
+    activeMachine() { return active ? machineOf.get(active) || null : null; },
+    nodesChanged() { toAll({ type: 'nodes' }); },
   };
   console.log(`[jarvis] ready — stt ${voice.stt}, tts ${voice.tts}, workspace ${ws.dir}`);
   return api;
