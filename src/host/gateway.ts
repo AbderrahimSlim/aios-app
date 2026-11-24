@@ -34,6 +34,63 @@ export interface GatewayOptions { port: number; bind: string; home: string; plat
 
 interface Client { ws: WebSocket; deviceId: string; wc: FakeWebContents; inflight: number; }
 
+/* SESSIONS OUTLIVE THEIR CLIENT (RFC §5.1, §8 "client disconnects mid-session").
+   Every pty is spawned with this router as its `e.sender`, so its output never depends on a socket.
+   A pty is owned by the client that spawned it; when that client goes, the pty keeps running
+   DETACHED and its output is kept (bounded). When a client then opens a terminal under the same
+   name — the renderer's own restore and resume paths do exactly that — it gets the live pty back,
+   with what it missed, instead of a second process under the same name. Nothing in app.js changes. */
+const DETACHED_BUFFER_CHARS = 256 * 1024;
+interface PtyRec { id: number; name: string; owner: Client | null; buffer: string; }
+class PtyRouter {
+  readonly wc: FakeWebContents;
+  private readonly ptys = new Map<number, PtyRec>();
+  constructor(private readonly toAll: (ch: string, a: unknown[]) => void, private readonly toOne: (c: Client, ch: string, a: unknown[]) => void) {
+    this.wc = new FakeWebContents(false, (ch, a) => this.route(ch, a));
+  }
+  private route(ch: string, a: unknown[]): void {
+    const m = a[0] as { id?: number } | undefined;
+    const rec = m && typeof m.id === 'number' ? this.ptys.get(m.id) : undefined;
+    if (ch === 'pty:data' && rec) {
+      if (rec.owner) this.toOne(rec.owner, ch, a);
+      else rec.buffer = (rec.buffer + String((a[0] as { data: string }).data)).slice(-DETACHED_BUFFER_CHARS);
+      return;
+    }
+    if (ch === 'pty:exit' && rec) {
+      if (rec.owner) this.toOne(rec.owner, ch, a);
+      this.ptys.delete(rec.id);
+      return;
+    }
+    this.toAll(ch, a);                       // a toast or focus intent raised while spawning
+  }
+  /** A detached live pty this client may take back, or undefined. */
+  adopt(c: Client, name: string): PtyRec | undefined {
+    const rec = [...this.ptys.values()].find((r) => !r.owner && r.name === name);
+    if (rec) rec.owner = c;
+    return rec;
+  }
+  spawned(c: Client, id: unknown, name: string): void {
+    if (typeof id === 'number') this.ptys.set(id, { id, name, owner: c, buffer: '' });
+  }
+  /** A client's request mentions a pty: only its owner may drive it. */
+  owns(c: Client, id: unknown): boolean {
+    const rec = typeof id === 'number' ? this.ptys.get(id) : undefined;
+    return !rec || rec.owner === c;
+  }
+  detach(c: Client): void {
+    for (const r of this.ptys.values()) if (r.owner === c) r.owner = null;
+  }
+  flush(rec: PtyRec): void {
+    if (!rec.owner || !rec.buffer) return;
+    const data = rec.buffer;
+    rec.buffer = '';
+    this.toOne(rec.owner, 'pty:data', [{ id: rec.id, data }]);
+  }
+  list(): Array<{ id: number; name: string; attached: boolean }> {
+    return [...this.ptys.values()].map((r) => ({ id: r.id, name: r.name, attached: !!r.owner }));
+  }
+}
+
 function isLoopbackHost(host: string | undefined): boolean {
   const h = String(host || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
   return h === 'localhost' || h === '127.0.0.1' || h === '::1';
@@ -65,11 +122,17 @@ export class Gateway {
   private readonly epoch = crypto.randomBytes(6).toString('hex');
   private seq = 0;
   private server!: http.Server;
+  private readonly router: PtyRouter;
 
   constructor(private readonly opts: GatewayOptions) {
     this.devices = new DeviceStore(opts.home);
-    setBroadcast((ch, a) => { for (const c of this.clients) this.emit(c, ch, a); });
+    const toAll = (ch: string, a: unknown[]) => { for (const c of this.clients) this.emit(c, ch, a); };
+    setBroadcast(toAll);
+    this.router = new PtyRouter(toAll, (c, ch, a) => this.emit(c, ch, a));
   }
+
+  /** Live ptys and whether a client is attached (for the CLI and health). */
+  ptys(): Array<{ id: number; name: string; attached: boolean }> { return this.router.list(); }
 
   get store(): DeviceStore { return this.devices; }
 
@@ -128,12 +191,20 @@ export class Gateway {
         return;
       }
       const event = { sender: c.wc, senderFrame: { url: 'aios-host://renderer/index.html' }, processId: 0, frameId: 0, returnValue: undefined as unknown, reply: (ch: string, ...a: unknown[]) => c.wc.send(ch, ...a) };
+      /* pty:write / resize / kill / run / cwd / record name a pty: only the client that owns it may drive it. */
+      const ptyArg = m.ch.startsWith('pty:') ? (m.a[0] as { id?: unknown } | undefined) : undefined;
+      const ptyId = ptyArg && typeof ptyArg === 'object' ? ptyArg.id : typeof m.a[0] === 'number' ? m.a[0] : undefined;
+      if (m.ch !== 'pty:spawn' && ptyId !== undefined && !this.router.owns(c, ptyId)) {
+        if (m.t === 'invoke') this.out(c, { t: 'res', id: m.id, ok: false, e: 'pty owned by another client' });
+        return;
+      }
       if (m.t === 'send') {
         try { ipcMain.emit(m.ch, event, ...m.a); } catch (e) { console.error(`[host] send ${m.ch}:`, e); }
         return;
       }
       const { id, ch, a } = m;
       if (c.inflight >= LIMITS.maxInflight) { this.out(c, { t: 'res', id, ok: false, e: 'too many requests in flight' }); return; }
+      if (ch === 'pty:spawn') { this.spawn(c, id, a, event); return; }
       const h = ipcMain.handlers.get(ch);
       if (!h) { this.out(c, { t: 'res', id, ok: false, e: `No handler registered for '${ch}'` }); return; }
       c.inflight++;
@@ -142,7 +213,27 @@ export class Gateway {
         (err) => this.out(c, { t: 'res', id, ok: false, e: String((err && err.message) || err) }),
       ).finally(() => { c.inflight--; });
     });
-    ws.on('close', () => { this.clients.delete(c); c.wc.destroy(); });
+    ws.on('close', () => { this.clients.delete(c); this.router.detach(c); c.wc.destroy(); });
+  }
+
+  /** pty:spawn, routed: take back a detached live pty of the same name, or spawn one owned by this client. */
+  private spawn(c: Client, reqId: number, a: unknown[], event: Record<string, unknown>): void {
+    const opts = (a[0] && typeof a[0] === 'object' ? a[0] : {}) as { name?: unknown; cols?: number; rows?: number };
+    const name = typeof opts.name === 'string' && opts.name ? opts.name : 'terminal';
+    const back = this.router.adopt(c, name);
+    if (back) {
+      this.out(c, { t: 'res', id: reqId, ok: true, v: back.id });
+      /* The renderer registers the pane right after the id comes back; replay once it has. */
+      setTimeout(() => this.router.flush(back), 400);
+      return;
+    }
+    const h = ipcMain.handlers.get('pty:spawn');
+    if (!h) { this.out(c, { t: 'res', id: reqId, ok: false, e: "No handler registered for 'pty:spawn'" }); return; }
+    c.inflight++;
+    Promise.resolve().then(() => h({ ...event, sender: this.router.wc }, ...a)).then(
+      (v) => { this.router.spawned(c, v, name); this.out(c, { t: 'res', id: reqId, ok: true, v }); },
+      (err) => this.out(c, { t: 'res', id: reqId, ok: false, e: String((err && err.message) || err) }),
+    ).finally(() => { c.inflight--; });
   }
 
   private async http(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -182,6 +273,7 @@ export class Gateway {
       return;
     }
     if (url.pathname === '/') { res.writeHead(302, { ...headers, Location: '/renderer/index.html' }); res.end(); return; }
+    if (url.pathname === '/favicon.ico') { res.writeHead(204, headers); res.end(); return; }
     if (url.pathname === '/web/boot.js') return this.text(res, MIME['.js'], this.bootScript());
     if (url.pathname === '/web/preload.js') return this.text(res, MIME['.js'], this.preloadScript());
     if (url.pathname === '/renderer/index.html') return this.text(res, MIME['.html'], this.indexHtml());
