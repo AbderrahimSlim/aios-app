@@ -45,16 +45,27 @@ async function start(): Promise<void> {
     checkForUpdates: () => Promise.resolve(null), checkForUpdatesAndNotify: () => Promise.resolve(null),
     downloadUpdate: () => Promise.resolve([]), quitAndInstall: () => undefined, setFeedURL: () => undefined,
   });
+  /* Every pty lives in the session supervisor, so a host restart never ends a session.
+     AIOS_HOST_NO_SUPERVISOR=1 keeps ptys in this process (they then end with it). */
+  const { PtyBridge } = await import('./ptyBridge');
+  const bridge = new PtyBridge();
+  const useSupervisor = process.env.AIOS_HOST_NO_SUPERVISOR !== '1';
+  if (useSupervisor) {
+    await bridge.connect();
+    if (bridge.orphans.length) console.log(`[host] ${bridge.orphans.length} session(s) survived the restart; reopen them by name to take them back`);
+  }
+  const ptyModule = bridge.module();
   Module._load = function (request: string, ...rest: unknown[]) {
     if (request === 'electron') return electronModule;
     if (request === 'electron-updater') return { autoUpdater: updater, default: { autoUpdater: updater } };
+    if (request === 'node-pty' && useSupervisor) return ptyModule;
     return load.call(this, request, ...rest);
   };
 
   const port = Number(process.env.AIOS_HOST_PORT || 4800);
   const bind = process.env.AIOS_HOST_BIND || '127.0.0.1';
   const { Gateway } = await import('./gateway');
-  const gw = new Gateway({ port, bind, home: HOST_HOME, platform: process.platform, version: app.getVersion() });
+  const gw = new Gateway({ port, bind, home: HOST_HOME, platform: process.platform, version: app.getVersion() }, bridge);
   await gw.start();
 
   /* The unmodified main process: registers its ~150 IPC handlers, the command bus, the panel host. */

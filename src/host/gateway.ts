@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { DeviceStore, parseCookies } from './auth';
 import { FakeWebContents, ipcMain, setBroadcast } from './electronShim';
+import { ProxyPty, PtyBridge } from './ptyBridge';
 import { asClientMsg, decode, encode, HostMsg, LIMITS, PROTOCOL_VERSION } from './protocol';
 
 const COOKIE = 'aios_host';
@@ -41,14 +42,22 @@ interface Client { ws: WebSocket; deviceId: string; wc: FakeWebContents; infligh
    name — the renderer's own restore and resume paths do exactly that — it gets the live pty back,
    with what it missed, instead of a second process under the same name. Nothing in app.js changes. */
 const DETACHED_BUFFER_CHARS = 256 * 1024;
-interface PtyRec { id: number; name: string; owner: Client | null; buffer: string; }
+/** First id given to a pty that outlived the previous host (main.ts numbers its own from 1). */
+const FOREIGN_BASE = 1_000_000;
+interface PtyRec {
+  id: number; name: string; owner: Client | null; buffer: string;
+  /** Taken back by name: the renderer's following pty:run (its opening command) must not be typed into the live session. */
+  swallowRun: boolean;
+  /** A pty from before this host started: main.ts does not know it, so the gateway drives it itself. */
+  foreign?: ProxyPty;
+}
 class PtyRouter {
   readonly wc: FakeWebContents;
   private readonly ptys = new Map<number, PtyRec>();
   constructor(private readonly toAll: (ch: string, a: unknown[]) => void, private readonly toOne: (c: Client, ch: string, a: unknown[]) => void) {
     this.wc = new FakeWebContents(false, (ch, a) => this.route(ch, a));
   }
-  private route(ch: string, a: unknown[]): void {
+  route(ch: string, a: unknown[]): void {
     const m = a[0] as { id?: number } | undefined;
     const rec = m && typeof m.id === 'number' ? this.ptys.get(m.id) : undefined;
     if (ch === 'pty:data' && rec) {
@@ -63,18 +72,29 @@ class PtyRouter {
     }
     this.toAll(ch, a);                       // a toast or focus intent raised while spawning
   }
+  /** Ptys that survived a host restart: detached, with what they printed, until a client asks for them by name. */
+  addForeign(orphans: Array<{ pty: ProxyPty; rec: { sid: number; meta: Record<string, unknown>; tail: string } }>): void {
+    for (const { pty, rec } of orphans) {
+      const id = FOREIGN_BASE + rec.sid;
+      const name = typeof rec.meta.name === 'string' && rec.meta.name ? rec.meta.name : 'terminal';
+      this.ptys.set(id, { id, name, owner: null, buffer: rec.tail.slice(-DETACHED_BUFFER_CHARS), swallowRun: false, foreign: pty });
+      pty.onData((data) => this.route('pty:data', [{ id, data }]));
+      pty.onExit(({ exitCode }) => this.route('pty:exit', [{ id, exitCode }]));
+    }
+  }
+  get(id: unknown): PtyRec | undefined { return typeof id === 'number' ? this.ptys.get(id) : undefined; }
   /** A detached live pty this client may take back, or undefined. */
   adopt(c: Client, name: string): PtyRec | undefined {
     const rec = [...this.ptys.values()].find((r) => !r.owner && r.name === name);
-    if (rec) rec.owner = c;
+    if (rec) { rec.owner = c; rec.swallowRun = true; }
     return rec;
   }
   spawned(c: Client, id: unknown, name: string): void {
-    if (typeof id === 'number') this.ptys.set(id, { id, name, owner: c, buffer: '' });
+    if (typeof id === 'number') this.ptys.set(id, { id, name, owner: c, buffer: '', swallowRun: false });
   }
   /** A client's request mentions a pty: only its owner may drive it. */
   owns(c: Client, id: unknown): boolean {
-    const rec = typeof id === 'number' ? this.ptys.get(id) : undefined;
+    const rec = this.get(id);
     return !rec || rec.owner === c;
   }
   detach(c: Client): void {
@@ -124,11 +144,12 @@ export class Gateway {
   private server!: http.Server;
   private readonly router: PtyRouter;
 
-  constructor(private readonly opts: GatewayOptions) {
+  constructor(private readonly opts: GatewayOptions, private readonly bridge: PtyBridge) {
     this.devices = new DeviceStore(opts.home);
     const toAll = (ch: string, a: unknown[]) => { for (const c of this.clients) this.emit(c, ch, a); };
     setBroadcast(toAll);
     this.router = new PtyRouter(toAll, (c, ch, a) => this.emit(c, ch, a));
+    this.router.addForeign(bridge.orphans);
   }
 
   /** Live ptys and whether a client is attached (for the CLI and health). */
@@ -198,6 +219,7 @@ export class Gateway {
         if (m.t === 'invoke') this.out(c, { t: 'res', id: m.id, ok: false, e: 'pty owned by another client' });
         return;
       }
+      if (this.ptyOp(c, m)) return;
       if (m.t === 'send') {
         try { ipcMain.emit(m.ch, event, ...m.a); } catch (e) { console.error(`[host] send ${m.ch}:`, e); }
         return;
@@ -216,6 +238,29 @@ export class Gateway {
     ws.on('close', () => { this.clients.delete(c); this.router.detach(c); c.wc.destroy(); });
   }
 
+  /** The pty requests the gateway answers itself: the opening command of a pty taken back (never typed
+   *  into the live session), and every request for a pty from before this host started. */
+  private ptyOp(c: Client, m: { t: 'invoke' | 'send'; ch: string; a: unknown[]; id?: number }): boolean {
+    if (!m.ch.startsWith('pty:') || m.ch === 'pty:spawn') return false;
+    const arg = m.a[0] as { id?: unknown; data?: unknown; cols?: unknown; rows?: unknown } | number | undefined;
+    const rec = this.router.get(typeof arg === 'number' ? arg : arg?.id);
+    if (!rec) return false;
+    const reply = (v: unknown) => { if (m.t === 'invoke' && typeof m.id === 'number') this.out(c, { t: 'res', id: m.id, ok: true, v }); };
+    if (m.ch === 'pty:run' && rec.swallowRun) { rec.swallowRun = false; reply(true); return true; }
+    const f = rec.foreign;
+    if (!f) return false;
+    const o = (typeof arg === 'object' && arg) || {};
+    switch (m.ch) {
+      case 'pty:write': f.write(String(o.data ?? '')); break;
+      case 'pty:resize': f.resize(Number(o.cols) || f.cols, Number(o.rows) || f.rows); break;
+      case 'pty:kill': f.kill(); break;
+      case 'pty:run': f.write(String((o as { cmd?: unknown }).cmd ?? '') + String.fromCharCode(13)); reply(true); return true;
+      default: reply(null); return true;   // cwd, record…: not available for a pty from a previous host
+    }
+    reply(true);
+    return true;
+  }
+
   /** pty:spawn, routed: take back a detached live pty of the same name, or spawn one owned by this client. */
   private spawn(c: Client, reqId: number, a: unknown[], event: Record<string, unknown>): void {
     const opts = (a[0] && typeof a[0] === 'object' ? a[0] : {}) as { name?: unknown; cols?: number; rows?: number };
@@ -227,6 +272,7 @@ export class Gateway {
       setTimeout(() => this.router.flush(back), 400);
       return;
     }
+    this.bridge.nextMeta = { name, cmd: (opts as { cmd?: unknown }).cmd };
     const h = ipcMain.handlers.get('pty:spawn');
     if (!h) { this.out(c, { t: 'res', id: reqId, ok: false, e: "No handler registered for 'pty:spawn'" }); return; }
     c.inflight++;

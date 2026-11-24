@@ -50,12 +50,24 @@ Do not run the desktop App and the host on the same machine at the same time: bo
 Every pty is spawned with a host-side router as its sender. When the owning browser goes, the pty keeps
 running **detached** and its output is buffered (256 KB). A client opening a terminal under the same
 name, which the renderer's restore and resume paths do, gets the live pty back with what it missed.
-Only a pty's owner may write to, resize, kill or query it.
+Only a pty's owner may write to, resize, kill or query it. When a pty is taken back, the renderer's
+opening command (`pty:run`) is swallowed: it is never typed into the live session.
+
+## Sessions outlive the host
+
+Ptys live in a separate **session supervisor** (`src/host/supervisor.ts`), started detached by the host
+and reached over a local socket (a named pipe on Windows) that requires the token in
+`~/.aios/host/supervisor.token`. The host sees a `node-pty` stand-in (`src/host/ptyBridge.ts`), so
+main.ts is unchanged. When the host restarts, the supervisor hands the new host every live pty with
+what it printed meanwhile; a client takes one back by name. The supervisor exits after ten minutes
+with no pty and no host. `AIOS_HOST_NO_SUPERVISOR=1` keeps ptys in the host process.
+
+A pty taken back after a host restart is a plain terminal to the host: the chat view and the Running
+card do not see it until it is reopened.
 
 ## Not yet (next steps of phase 1)
 
-- A separate session-supervisor process, so a **host** restart keeps ptys alive (today a host restart
-  ends them; named Claude sessions come back with `--resume`).
+- A machine reboot ends every pty; named Claude sessions come back with `--resume`.
 - Several viewers on one session, and an explicit "take control".
 - File uploads for drag-and-drop (the browser never learns a dropped file's path).
 - Desktop-only surfaces are inert in host mode: tray, global quick bar, keep-awake, auto-update,
