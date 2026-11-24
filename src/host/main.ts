@@ -113,6 +113,13 @@ async function start(): Promise<void> {
       const { Scheduler, activity, INBOX } = await import('./scheduler');
       const sched = new Scheduler({ framework, hostHome: HOST_HOME, isLive: (n) => gw.isLive(n), liveCount: (p) => gw.liveCount(p), askJarvis: jarvis ? (t) => jarvis!.ask(t) : undefined });
       if (process.env.AIOS_SCHEDULER !== '0') sched.start();
+      /* aios-brain: the vault as a remote MCP connector (own loopback port, published alone by Funnel). */
+      if (process.env.AIOS_BRAIN !== '0') {
+        const { Brain } = await import('./brain');
+        const brain = new Brain(HOST_HOME, framework, () => gw.ptys().map((p) => p.name).filter((n) => n && n !== 'terminal'));
+        brain.start();
+        gw.brain = brain;
+      }
       const readJson = (f: string) => { try { return JSON.parse(fs.readFileSync(path.join(HOST_HOME, f), 'utf8').replace(/^\uFEFF/, '')); } catch { return {}; } };
       const mem = readJson('memory.json');
       if (process.env.AIOS_MEMORY !== '0' && mem.enabled !== false) {

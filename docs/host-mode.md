@@ -131,3 +131,13 @@ in the Jarvis panel; else the only node online; else it asks), and records queue
 cancelled / unknown, with deadlines; a node dropping mid-call re-queues repeatable capabilities only.
 Jarvis reaches it through the `aios-nodes` MCP server (`src/jarvis/nodesMcp.ts`) over the loopback-only,
 token-guarded `/internal/nodes`. Screen captures land in `vault/02 - assets/generated/screens/`.
+
+## aios-brain: the vault as a remote MCP connector
+
+`src/host/brain.ts` serves MCP over HTTP on its own loopback port (4801), published ALONE with Tailscale
+Funnel on 8443 (the AIOS UI stays tailnet-only). OAuth 2.1 (dynamic client registration limited to
+Claude's callbacks and loopback apps, PKCE S256, rotating refresh tokens) delegates the login to GitHub
+and admits one GitHub account only. The GitHub App is created by GitHub's manifest flow from
+`/brain/setup` on the tailnet UI (three clicks: allow Funnel, create the app, add the connector URL in
+claude.ai). Tools: vault_search, vault_read, vault_note (append-only, one `brain:` commit), agents_status,
+agent_spawn.

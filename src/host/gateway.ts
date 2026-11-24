@@ -149,6 +149,8 @@ export class Gateway {
   private seq = 0;
   private server!: http.Server;
   private readonly router: PtyRouter;
+  /** aios-brain, when started: its setup page is served here (tailnet, paired devices). */
+  brain: import('./brain').Brain | null = null;
   /** Nodes (PCs running jarvis-node) and their capability requests. */
   readonly nodes = new NodeBroker();
   /** Token of the loopback-only /internal API (file readable by the operator only). */
@@ -415,6 +417,17 @@ export class Gateway {
        only the operator can read. Never reachable through tailscale serve: that arrives with a Host
        header naming the tailnet, and the token is required anyway. */
     if (url.pathname === '/internal/nodes') return this.internalNodes(req, res, headers);
+    /* GitHub sends the browser back here after creating the aios-brain app. A SameSite=Strict cookie is not
+       sent on that cross-site navigation, so this one route is guarded by the single-use setup state instead. */
+    if (url.pathname === '/brain/setup/done' && this.brain) {
+      try {
+        const login = await this.brain.setupDone(String(url.searchParams.get('code') || ''), String(url.searchParams.get('state') || ''));
+        res.writeHead(303, { ...headers, Location: `/brain/setup?created=${encodeURIComponent(login)}` }); res.end();
+      } catch (e) {
+        res.writeHead(400, { ...headers, 'Content-Type': 'text/plain; charset=utf-8' }); res.end(`Configuration aios-brain : ${String((e as Error).message || e)}`);
+      }
+      return;
+    }
 
     const viewer = this.devices.verify(parseCookies(req.headers.cookie)[COOKIE]);
     if (!viewer || viewer.role === 'node') {
@@ -424,6 +437,7 @@ export class Gateway {
     }
     if (url.pathname === '/') { res.writeHead(302, { ...headers, Location: '/renderer/index.html' }); res.end(); return; }
     if (url.pathname === '/favicon.ico') { res.writeHead(204, headers); res.end(); return; }
+    if (url.pathname.startsWith('/brain/setup') && this.brain) return this.brainSetup(req, res, url, headers);
     if (url.pathname === '/hostfile') return this.hostFile(url.searchParams.get('p') || '', res, headers);
     if (url.pathname === '/web/boot.js') return this.text(res, MIME['.js'], this.bootScript());
     if (url.pathname === '/web/preload.js') return this.text(res, MIME['.js'], this.preloadScript());
@@ -470,6 +484,41 @@ export class Gateway {
     const sandbox = ext === '.html' || ext === '.htm' || ext === '.svg' ? { 'Content-Security-Policy': 'sandbox' } : {};
     res.writeHead(200, { ...headers, ...sandbox, 'Content-Type': type, 'Content-Length': st.size });
     fs.createReadStream(real).pipe(res);
+  }
+
+  /** The aios-brain setup page (tailnet only, paired devices only): Funnel, GitHub App, connector URL. */
+  private async brainSetup(req: http.IncomingMessage, res: http.ServerResponse, url: URL, headers: Record<string, string>): Promise<void> {
+    const b = this.brain!;
+    const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+    const sameOrigin = req.headers['sec-fetch-site'] === 'same-origin' || (() => { try { return new URL(String(req.headers.origin)).host === req.headers.host; } catch { return false; } })();
+    let notice = '';
+    if (url.pathname === '/brain/setup/funnel' && req.method === 'POST') {
+      if (!sameOrigin) { res.writeHead(403, headers); res.end(); return; }
+      const r = await b.funnel();
+      notice = r.ok ? 'Exposition activée.' : `Funnel : ${r.out}`;
+    }
+    await b.ensurePublicBase();
+    const fstatus = await b.funnelStatus();
+    const funnelOn = /:8443/.test(fstatus) && /Funnel on/i.test(fstatus);
+    const enableLink = /(https:\/\/login\.tailscale\.com\/f\/funnel\S*)/.exec(notice)?.[1];
+    const tailnetBase = `${isLoopbackHost(req.headers.host) ? 'http' : 'https'}://${req.headers.host}`;
+    const created = url.searchParams.get('created');
+    const { state, manifest } = b.manifest(tailnetBase);
+    const step = (done: boolean, title: string, body: string) => `<section class="${done ? 'done' : ''}"><h2>${done ? '✓' : '○'} ${title}</h2>${body}</section>`;
+    const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>aios-brain — configuration</title>
+<style>body{font:15px system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;color:#222}section{border:1px solid #ddd;border-radius:10px;padding:1rem 1.2rem;margin:1rem 0}section.done{opacity:.75}h2{font-size:1.05rem;margin:.2rem 0 .6rem}code{background:#f3f3f3;padding:.1rem .3rem;border-radius:4px;word-break:break-all}button{padding:.5rem 1rem;border-radius:8px;border:0;background:#2f81f7;color:#fff;font-size:.95rem;cursor:pointer}.n{color:#b35c00}</style></head><body>
+<h1>aios-brain</h1><p>Ton vault dans n'importe quelle conversation Claude (web, mobile, desktop). Seul ton compte GitHub peut s'y connecter.</p>
+${notice ? `<p class="n">${esc(notice)}</p>` : ''}${created ? `<p class="n">GitHub App créée. Compte autorisé : <b>${esc(created)}</b>.</p>` : ''}
+${step(funnelOn, '1. Exposer aios-brain (et lui seul) sur Internet', funnelOn ? `<p>Adresse publique : <code>${esc(b.publicUrl)}</code></p>` :
+  `<p>Funnel doit être autorisé une fois pour ton tailnet${enableLink ? ` : <a href="${esc(enableLink)}" target="_blank" rel="noopener">autoriser Funnel</a>` : ' (le bouton te donnera le lien si besoin)'}, puis :</p>
+   <form method="post" action="/brain/setup/funnel"><button>Activer l'exposition (port 8443)</button></form>`)}
+${step(b.configured, '2. Connexion par GitHub', b.configured ? `<p>GitHub App configurée${b ? '' : ''}.</p>` :
+  `<p>Crée l'application GitHub qui vérifiera que c'est bien toi (aucune permission sur tes dépôts) :</p>
+   <form method="post" action="https://github.com/settings/apps/new?state=${esc(state)}"><input type="hidden" name="manifest" value="${esc(manifest)}"><button>Créer la GitHub App</button></form>`)}
+${step(false, '3. Ajouter le connecteur dans Claude', `<p>claude.ai → Paramètres → Connecteurs → <i>Ajouter un connecteur personnalisé</i> : nom <code>aios-brain</code>, URL :</p><p><code>${esc(b.connectorUrl)}</code></p><p>Il apparaît ensuite dans Claude mobile et desktop. La première utilisation te fait passer par GitHub.</p>`)}
+</body></html>`;
+    res.writeHead(200, { ...headers, 'Content-Type': MIME['.html'], 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://github.com; base-uri 'none'" });
+    res.end(html);
   }
 
   private async internalNodes(req: http.IncomingMessage, res: http.ServerResponse, headers: Record<string, string>): Promise<void> {
