@@ -2437,9 +2437,17 @@ function doctorChecks(): DoctorCheck[] {
       run: async (): Promise<CheckResult> => {
         const label = t('setupCheck.hooks');
         if (!root) return { id: 'hooks', label, status: 'warn', message: t('setupCheck.hooksNoFramework'), canRepair: false };
-        const missing = missingHooks(readJson(claudeSettingsPath()), (rel) => fs.existsSync(path.join(root, rel)),
-          [root, '~/aios', '$HOME/aios', path.join(os.homedir(), 'aios')]);   // an old path into THIS framework is the one Repair rewrites
+        const roots = [root, '~/aios', '$HOME/aios', path.join(os.homedir(), 'aios')];   // an old path into THIS framework is the one Repair rewrites
+        const exists = (rel: string) => fs.existsSync(path.join(root, rel));
+        const missing = missingHooks(readJson(claudeSettingsPath()), exists, roots);
         if (!missing.length) return { id: 'hooks', label, status: 'pass', message: t('setupCheck.hooksOk'), canRepair: false };
+        /* Fork (infra-aios-jarvis): hooks wired in the FRAMEWORK's own .claude/settings.json are wired too.
+           That is the zero-impact setup: AIOS hooks run in AIOS sessions only, never in the operator's
+           other projects. Repair then completes that file, never the global one. */
+        const projectFile = projectHooksSettingsPath(root);
+        if (fs.existsSync(projectFile) && !missingHooks(readJson(projectFile), exists, roots).length) {
+          return { id: 'hooks', label, status: 'pass', message: t('setupCheck.hooksOk') + ' (projet AIOS)', canRepair: false };
+        }
         const script = installSettingsScript();
         const py = script ? pythonRunner() : undefined;
         return {
@@ -2455,7 +2463,10 @@ function doctorChecks(): DoctorCheck[] {
         if (!script || !py) return;
         /* --settings names the file THIS check reads, so the installer and the check can never be
            looking at two different settings.json files (CLAUDE_CONFIG_DIR, a fixture home). */
-        await execFileP(py.bin, [...py.args, script, '--apply', '--settings', claudeSettingsPath()], root, 300000);
+        /* Fork: when the framework already carries project-level hooks, complete THAT file (zero impact on
+           other projects); otherwise behave as upstream. */
+        const target = fs.existsSync(projectHooksSettingsPath(root!)) ? projectHooksSettingsPath(root!) : claudeSettingsPath();
+        await execFileP(py.bin, [...py.args, script, '--apply', '--settings', target], root, 300000);
       },
     },
     {
@@ -2872,6 +2883,8 @@ function githubUserStatus(token: string): Promise<{ status: number; expires?: st
  *  developer's real machine state. Production never sets these. */
 export const claudeDir = () => process.env.GLASS_CLAUDE_HOME || claudeConfigDir();
 const claudeSettingsPath = () => path.join(claudeDir(), 'settings.json');
+/** The framework's own project settings, where the zero-impact setup wires the AIOS hooks. */
+const projectHooksSettingsPath = (root: string) => path.join(root, '.claude', 'settings.json');
 const claudeJsonPath = () => process.env.GLASS_CLAUDE_JSON || claudeJsonDefault();
 
 /* ORDERED BY CAPABILITY, STRONGEST FIRST — and that order is now load-bearing, not cosmetic.
