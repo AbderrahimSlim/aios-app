@@ -38,7 +38,8 @@ Do not run the desktop App and the host on the same machine at the same time: bo
 
 - Loopback bind by default (`AIOS_HOST_BIND` to change it; a warning is printed beyond loopback).
 - Pairing: single-use host-generated codes; per-device secrets stored as SHA-256 only; HttpOnly,
-  SameSite=Strict cookie (Secure when not on localhost); five wrong codes lock pairing for five minutes.
+  SameSite=Lax cookie (Secure when not on localhost; renewed at each visit; Strict withheld it when the page was
+  opened from a link elsewhere, and the browser was asked to pair again); five wrong codes lock pairing for five minutes.
 - WebSocket: paired cookie **and** an `Origin` equal to the page's host; messages shape-checked,
   16 MB frames, bounded requests in flight.
 - Static files: `renderer/`, an allowlist of `node_modules` packages and the compiled preload only.

@@ -20,6 +20,13 @@ import { NodeBroker } from './nodes';
 import { asClientMsg, decode, encode, HostMsg, LIMITS, PROTOCOL_VERSION } from './protocol';
 
 const COOKIE = 'aios_host';
+/* SameSite=Lax, not Strict: Strict withholds the cookie when the page is opened from a link on another site
+   (claude.ai, a chat, the Tailscale console), so a paired browser landed on /pair and was paired again.
+   Lax only adds top-level GET navigations; the WebSocket still requires the cookie AND a same-host Origin,
+   and the pairing POST its own Origin check. Each visit of / renews it, so a device in use never expires. */
+function deviceCookie(value: string, secure: boolean): string {
+  return `${COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${secure ? '; Secure' : ''}`;
+}
 const APP_ROOT = path.join(__dirname, '..', '..');
 
 /** node_modules packages the renderer links to (renderer/index.html). Nothing else under node_modules is served. */
@@ -403,11 +410,14 @@ export class Gateway {
         }
         res.writeHead(303, {
           ...headers, Location: '/',
-          'Set-Cookie': `${COOKIE}=${encodeURIComponent(cookie)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure ? '; Secure' : ''}`,
+          'Set-Cookie': deviceCookie(cookie, secure),
         });
         res.end();
         return;
       }
+      /* Already paired: straight to the App, never a second pairing of the same browser. */
+      const known = this.devices.verify(parseCookies(req.headers.cookie)[COOKIE]);
+      if (known && known.role !== 'node') { res.writeHead(302, { ...headers, Location: '/' }); res.end(); return; }
       res.writeHead(200, { ...pageHeaders, 'Content-Type': MIME['.html'] });
       res.end(pairPage(''));
       return;
@@ -417,8 +427,8 @@ export class Gateway {
        only the operator can read. Never reachable through tailscale serve: that arrives with a Host
        header naming the tailnet, and the token is required anyway. */
     if (url.pathname === '/internal/nodes') return this.internalNodes(req, res, headers);
-    /* GitHub sends the browser back here after creating the aios-brain app. A SameSite=Strict cookie is not
-       sent on that cross-site navigation, so this one route is guarded by the single-use setup state instead. */
+    /* GitHub sends the browser back here after creating the aios-brain app. It is guarded by the single-use
+       setup state, not by the device cookie (a cross-site redirect: do not rely on the cookie's SameSite). */
     if (url.pathname === '/brain/setup/done' && this.brain) {
       try {
         const login = await this.brain.setupDone(String(url.searchParams.get('code') || ''), String(url.searchParams.get('state') || ''));
@@ -435,7 +445,11 @@ export class Gateway {
       res.end();
       return;
     }
-    if (url.pathname === '/') { res.writeHead(302, { ...headers, Location: '/renderer/index.html' }); res.end(); return; }
+    if (url.pathname === '/') {
+      res.writeHead(302, { ...headers, Location: '/renderer/index.html', 'Set-Cookie': deviceCookie(parseCookies(req.headers.cookie)[COOKIE], secure) });
+      res.end();
+      return;
+    }
     if (url.pathname === '/favicon.ico') { res.writeHead(204, headers); res.end(); return; }
     if (url.pathname.startsWith('/brain/setup') && this.brain) return this.brainSetup(req, res, url, headers);
     if (url.pathname === '/hostfile') return this.hostFile(url.searchParams.get('p') || '', res, headers);

@@ -52,6 +52,19 @@ test('pairing: five wrong codes lock pairing, even for a valid code', () => {
   assert.equal(s.pair(good, 'late'), null);
 });
 
+test('pairing: an unreadable devices file is not "no device" (review: false revocations on Windows)', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'aios-host-'));
+  const store = new DeviceStore(home);
+  const cookie = store.pair(store.newCode(), 'edge')!;
+  assert.ok(store.verify(cookie));
+  fs.writeFileSync(path.join(home, 'devices.json'), '[{"id": ');   // torn / locked read
+  assert.ok(store.verify(cookie), 'the last good list is kept');
+  const second = store.pair(store.newCode(), 'phone')!;
+  assert.ok(store.verify(cookie) && store.verify(second), 'a pairing does not drop the others');
+  fs.rmSync(path.join(home, 'devices.json'));
+  assert.equal(store.verify(cookie), null, 'a deleted file is no device');
+});
+
 test('cookies parse', () => {
   assert.deepEqual(parseCookies('a=1; aios_host=ab.cd%3D; b'), { a: '1', aios_host: 'ab.cd=' });
 });

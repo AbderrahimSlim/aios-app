@@ -38,13 +38,26 @@ export class DeviceStore {
   private readonly codesFile: string;
   /** Failed code attempts, to slow a guesser down (5 wrong codes → 5 minutes locked, jarvis-fr's rule). */
   private failures: number[] = [];
+  /** The last list read successfully. A read that fails for another reason than a missing file (Windows:
+      the file is being replaced, or held by an antivirus scan) returns it instead of "no device": an empty
+      answer made the revoke poll close every page as revoked, and a pairing then rewrote the file with
+      only the new device. */
+  private lastGood: Device[] = [];
 
   constructor(home: string) {
     this.devicesFile = path.join(home, 'devices.json');
     this.codesFile = path.join(home, 'pairing-codes.json');
   }
 
-  list(): Device[] { return readJson<Device[]>(this.devicesFile, []); }
+  list(): Device[] {
+    try {
+      const v = JSON.parse(fs.readFileSync(this.devicesFile, 'utf8').replace(/^﻿/, '')) as unknown;
+      if (Array.isArray(v)) this.lastGood = v as Device[];
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') this.lastGood = [];
+    }
+    return this.lastGood.map((d) => ({ ...d }));
+  }
 
   /** A new single-use code, valid ten minutes. Files are shared with the running host, so the CLI and the server agree without IPC. */
   newCode(): string {
