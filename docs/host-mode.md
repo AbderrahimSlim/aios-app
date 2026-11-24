@@ -23,8 +23,8 @@ node out/host/main.js revoke <id> # revoke one; its open connections close withi
 Open `http://127.0.0.1:4800/` on the host, or reach it from other devices through your tailnet:
 
 ```bash
-tailscale serve --bg --https=443 http://127.0.0.1:4800
-# → https://<machine>.<tailnet>.ts.net/
+tailscale serve --bg --https=8443 http://127.0.0.1:4800
+# → https://<machine>.<tailnet>.ts.net:8443/   (443 is left to aios-brain, the only public service)
 ```
 
 TLS is required for voice: browsers only grant the microphone on https or localhost.
@@ -135,7 +135,7 @@ token-guarded `/internal/nodes`. Screen captures land in `vault/02 - assets/gene
 ## aios-brain: the vault as a remote MCP connector
 
 `src/host/brain.ts` serves MCP over HTTP on its own loopback port (4801), published ALONE with Tailscale
-Funnel on 8443 (the AIOS UI stays tailnet-only). OAuth 2.1 (dynamic client registration limited to
+Funnel on 443, the only port claude.ai accepts (the AIOS UI moves to tailnet-only :8443). OAuth 2.1 (dynamic client registration limited to
 Claude's callbacks and loopback apps, PKCE S256, rotating refresh tokens) delegates the login to GitHub
 and admits one GitHub account only. The GitHub App is created by GitHub's manifest flow from
 `/brain/setup` on the tailnet UI (three clicks: allow Funnel, create the app, add the connector URL in

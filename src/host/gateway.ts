@@ -499,7 +499,7 @@ export class Gateway {
     }
     await b.ensurePublicBase();
     const fstatus = await b.funnelStatus();
-    const funnelOn = /:8443/.test(fstatus) && /Funnel on/i.test(fstatus);
+    const funnelOn = fstatus.split(/\r?\n/).some((l) => l.startsWith(`${b.publicUrl} (Funnel on)`));
     const enableLink = /(https:\/\/login\.tailscale\.com\/f\/funnel\S*)/.exec(notice)?.[1];
     const tailnetBase = `${isLoopbackHost(req.headers.host) ? 'http' : 'https'}://${req.headers.host}`;
     const created = url.searchParams.get('created');
@@ -511,7 +511,7 @@ export class Gateway {
 ${notice ? `<p class="n">${esc(notice)}</p>` : ''}${created ? `<p class="n">GitHub App créée. Compte autorisé : <b>${esc(created)}</b>.</p>` : ''}
 ${step(funnelOn, '1. Exposer aios-brain (et lui seul) sur Internet', funnelOn ? `<p>Adresse publique : <code>${esc(b.publicUrl)}</code></p>` :
   `<p>Funnel doit être autorisé une fois pour ton tailnet${enableLink ? ` : <a href="${esc(enableLink)}" target="_blank" rel="noopener">autoriser Funnel</a>` : ' (le bouton te donnera le lien si besoin)'}, puis :</p>
-   <form method="post" action="/brain/setup/funnel"><button>Activer l'exposition (port 8443)</button></form>`)}
+   <form method="post" action="/brain/setup/funnel"><button>Activer l'exposition (port 443)</button></form>`)}
 ${step(b.configured, '2. Connexion par GitHub', b.configured ? `<p>GitHub App configurée${b ? '' : ''}.</p>` :
   `<p>Crée l'application GitHub qui vérifiera que c'est bien toi (aucune permission sur tes dépôts) :</p>
    <form method="post" action="https://github.com/settings/apps/new?state=${esc(state)}"><input type="hidden" name="manifest" value="${esc(manifest)}"><button>Créer la GitHub App</button></form>`)}

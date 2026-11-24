@@ -2,7 +2,7 @@
    desktop, Claude Code), plan phase 3.
 
    It is the ONLY part of the host exposed to the internet, so it lives on its own loopback port (4801),
-   published alone with Tailscale Funnel (https://<machine>.<tailnet>.ts.net:8443); the AIOS UI stays
+   published alone with Tailscale Funnel on 443 (claude.ai accepts no other port); the AIOS UI moves to :8443 and stays
    tailnet-only. Every MCP request needs an OAuth 2.1 access token (MCP authorization spec):
      /.well-known/oauth-protected-resource, /.well-known/oauth-authorization-server, /register (dynamic
      client registration, Claude's callbacks and loopback only), /authorize (PKCE S256 required) →
@@ -100,14 +100,15 @@ export class Brain {
         try { resolve(String(JSON.parse(out).Self.DNSName || '').replace(/\.$/, '')); } catch { resolve(''); }
       });
     });
-    if (dns) { this.cfg.publicBaseUrl = `https://${dns}:8443`; this.saveCfg(); }
+    /* Port 443: claude.ai refuses a connector URL with any other port. */
+    if (dns) { this.cfg.publicBaseUrl = `https://${dns}`; this.saveCfg(); }
     return this.cfg.publicBaseUrl || '';
   }
 
   funnel(): Promise<{ ok: boolean; out: string }> {
     return new Promise((resolve) => {
       const exe = process.platform === 'win32' ? 'C:\\Program Files\\Tailscale\\tailscale.exe' : 'tailscale';
-      execFile(exe, ['funnel', '--bg', '--https=8443', `http://127.0.0.1:${this.cfg.port || 4801}`], { windowsHide: true, timeout: 20_000 }, (e, out, err) => {
+      execFile(exe, ['funnel', '--bg', '--https=443', `http://127.0.0.1:${this.cfg.port || 4801}`], { windowsHide: true, timeout: 20_000 }, (e, out, err) => {
         const text = `${out}${err}`.trim();
         resolve({ ok: !e && !/not enabled|error/i.test(text), out: text });
       });

@@ -46,7 +46,7 @@ switch ($Action) {
     Start-ScheduledTask -TaskName $TaskName
     Write-Output "Installed and started '$TaskName'. Log: $log"
     Write-Output "Pair a device:  node `"$Entry`" pair"
-    Write-Output "Remote access:  tailscale serve --bg --https=443 http://127.0.0.1:4800"
+    Write-Output "Remote access:  tailscale serve --bg --https=8443 http://127.0.0.1:4800"
   }
   'uninstall' {
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue

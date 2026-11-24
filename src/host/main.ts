@@ -9,7 +9,7 @@
    ENV   AIOS_HOST_PORT (4800) · AIOS_HOST_BIND (127.0.0.1) · AIOS_HOST_HOME (~/.aios/host) · AIOS_HOST_DEBUG=1
 
    Remote access: keep the loopback bind and publish it on your tailnet with TLS, e.g.
-     tailscale serve --bg --https=443 http://127.0.0.1:4800
+     tailscale serve --bg --https=8443 http://127.0.0.1:4800
    A browser only grants the microphone on https or localhost, so TLS is not optional for voice. */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
