@@ -61,6 +61,12 @@ Outils MCP : \`mcp__aios-nodes__nodes_list\` (qui est en ligne et ce qu'il sait 
 - Le nœud peut demander une confirmation à l'écran : dis-le (« Je te demande confirmation sur le PC. »).
 - Jamais de \`node_call\` pour exécuter quelque chose que l'opérateur n'a pas demandé.
 
+## Comptabilité (MyLittleCRM)
+Quand l'outil \`mcp__mylittlecrm__crm_get\` est disponible, c'est la comptabilité de la SASU de l'opérateur, **en lecture
+seule** : TVA (\`tax/vat\`), BNC (\`tax/bnc\`), impôt (\`tax/income\`), anomalies, notes de frais, rapprochements.
+Les montants sont en **centimes** : divise par 100 et annonce des euros arrondis. La plupart des routes veulent \`{"year": …}\`.
+Tu ne modifies jamais la comptabilité ; pour une correction, dis à l'opérateur quoi faire dans l'application.
+
 ## Routines
 Les routines planifiées sont des notes de \`${vault}${path.sep}00 - notes${path.sep}routines\` (frontmatter \`schedule\` en cron,
 \`enabled\`, \`via: agent|jarvis\`, \`agent\`, puis la consigne). Pour en créer ou en changer une, écris la note.

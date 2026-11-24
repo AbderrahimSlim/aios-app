@@ -89,6 +89,12 @@ async function start(): Promise<void> {
               args: [path.join(__dirname, '..', 'jarvis', 'nodesMcp.js')],
               env: { AIOS_HOST_PORT: String(port), AIOS_INTERNAL_TOKEN_FILE: path.join(HOST_HOME, 'internal.token'), AIOS_SCREENS_DIR: path.join(roots.framework, 'vault', '02 - assets', 'generated', 'screens') },
             },
+            /* Read-only bookkeeping (MyLittleCRM), when jarvis.json names its API: { "mylittlecrm": "http://127.0.0.1:3001/api" }. */
+            ...(() => {
+              let url = '';
+              try { url = String(JSON.parse(fs.readFileSync(path.join(HOST_HOME, 'jarvis.json'), 'utf8').replace(/^﻿/, '')).mylittlecrm || ''); } catch { url = ''; }
+              return url ? { mylittlecrm: { command: process.execPath, args: [path.join(__dirname, '..', 'jarvis', 'mlcMcp.js')], env: { MLC_URL: url } } } : {};
+            })(),
           },
         });
         const j = jarvis;
