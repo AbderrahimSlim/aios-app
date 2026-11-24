@@ -363,10 +363,17 @@ export class Gateway {
     const headers = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' };
 
     if (url.pathname === '/pair') {
+      /* The pairing page must NOT be served with `Referrer-Policy: no-referrer`: under that policy a browser
+         sends `Origin: null` with the form's POST, and the same-origin check below refused every real browser
+         (curl, which ignores the policy, passed). `same-origin` keeps the Origin for this form only. */
+      const pageHeaders = { ...headers, 'Referrer-Policy': 'same-origin' };
       if (req.method === 'POST') {
         const origin = String(req.headers.origin || '');
         let ok = false;
         try { ok = new URL(origin).host === req.headers.host; } catch { ok = false; }
+        /* A browser that still withholds the Origin (privacy settings, extensions) proves the same origin with
+           Sec-Fetch-Site, a header no web page can set. */
+        if (!ok && (origin === '' || origin === 'null') && req.headers['sec-fetch-site'] === 'same-origin') ok = true;
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 4096) break; }
         const form = new URLSearchParams(body);
@@ -379,9 +386,15 @@ export class Gateway {
           res.end(JSON.stringify(cred ? { credential: cred } : { error: this.devices.locked() ? 'locked: too many attempts' : 'invalid or expired code' }));
           return;
         }
-        const cookie = ok ? this.devices.pair(code, String(req.headers['user-agent'] || 'browser')) : null;
+        if (!ok) {
+          console.warn(`[host] pairing refused: origin "${origin}" does not match host "${req.headers.host}"`);
+          res.writeHead(403, { ...pageHeaders, 'Content-Type': MIME['.html'] });
+          res.end(pairPage('Demande refusée : ouvre cette page directement à l’adresse de l’hôte, puis réessaie (le code n’a pas été utilisé).'));
+          return;
+        }
+        const cookie = this.devices.pair(code, String(req.headers['user-agent'] || 'browser'));
         if (!cookie) {
-          res.writeHead(403, { ...headers, 'Content-Type': MIME['.html'] });
+          res.writeHead(403, { ...pageHeaders, 'Content-Type': MIME['.html'] });
           res.end(pairPage(this.devices.locked() ? 'Trop d’essais, réessaie dans 5 min.' : 'Code invalide ou expiré.'));
           return;
         }
@@ -392,7 +405,7 @@ export class Gateway {
         res.end();
         return;
       }
-      res.writeHead(200, { ...headers, 'Content-Type': MIME['.html'] });
+      res.writeHead(200, { ...pageHeaders, 'Content-Type': MIME['.html'] });
       res.end(pairPage(''));
       return;
     }
