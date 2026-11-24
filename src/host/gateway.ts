@@ -274,6 +274,7 @@ export class Gateway {
     }
     if (url.pathname === '/') { res.writeHead(302, { ...headers, Location: '/renderer/index.html' }); res.end(); return; }
     if (url.pathname === '/favicon.ico') { res.writeHead(204, headers); res.end(); return; }
+    if (url.pathname === '/hostfile') return this.hostFile(url.searchParams.get('p') || '', res, headers);
     if (url.pathname === '/web/boot.js') return this.text(res, MIME['.js'], this.bootScript());
     if (url.pathname === '/web/preload.js') return this.text(res, MIME['.js'], this.preloadScript());
     if (url.pathname === '/renderer/index.html') return this.text(res, MIME['.html'], this.indexHtml());
@@ -293,6 +294,34 @@ export class Gateway {
     });
   }
 
+  /* The viewers' files (images, PDFs, HTML exports), which the desktop loads as file:// URLs. Only
+     inside the roots the explorer may show (framework, vault, workspace folders), symlinks resolved.
+     HTML and SVG are served SANDBOXED (a unique origin, no scripts): a page in the vault must never
+     reach the app's glassShell, which a same-origin frame could. */
+  private async hostFile(p: string, res: http.ServerResponse, headers: Record<string, string>): Promise<void> {
+    const deny = () => { res.writeHead(404, headers); res.end(); };
+    if (!p || !path.isAbsolute(p)) return deny();
+    let real: string;
+    try { real = await fs.promises.realpath(p); } catch { return deny(); }
+    const rootsHandler = ipcMain.handlers.get('fs:roots');
+    let roots: string[] = [];
+    try {
+      const r = (await rootsHandler?.({ sender: null })) as { framework?: string | null; vault?: string | null; workspace?: { path: string }[] } | undefined;
+      roots = [r?.framework, r?.vault, ...(r?.workspace || []).map((w) => w.path)].filter((x): x is string => !!x);
+    } catch { roots = []; }
+    const inside = (await Promise.all(roots.map((r) => fs.promises.realpath(r).catch(() => null))))
+      .some((r) => !!r && (real === r || real.startsWith(r + path.sep)));
+    if (!inside) return deny();
+    let st: fs.Stats;
+    try { st = await fs.promises.stat(real); } catch { return deny(); }
+    if (!st.isFile()) return deny();
+    const ext = path.extname(real).toLowerCase();
+    const type = ext === '.pdf' ? 'application/pdf' : MIME[ext] || 'application/octet-stream';
+    const sandbox = ext === '.html' || ext === '.htm' || ext === '.svg' ? { 'Content-Security-Policy': 'sandbox' } : {};
+    res.writeHead(200, { ...headers, ...sandbox, 'Content-Type': type, 'Content-Length': st.size });
+    fs.createReadStream(real).pipe(res);
+  }
+
   private text(res: http.ServerResponse, type: string, body: string): void {
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     res.end(body);
@@ -302,7 +331,9 @@ export class Gateway {
   private indexHtml(): string {
     const html = fs.readFileSync(path.join(APP_ROOT, 'renderer', 'index.html'), 'utf8');
     const inject = '<script src="/web/boot.js"></script>\n<script src="/web/preload.js"></script>\n<script src="/web/web-shell.js"></script>\n';
-    return html.replace(/(<script src="csp-report\.js"><\/script>)/, `$1\n${inject}`);
+    return html
+      .replace(/(<script src="csp-report\.js"><\/script>)/, `$1\n${inject}`)
+      .replace(/(<script src="app\.js"><\/script>)/, '$1\n<script src="/web/after-app.js"></script>');
   }
 
   /** Facts the page needs synchronously at load (app.js reads glassShell.platform on its first line). */
