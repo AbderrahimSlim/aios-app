@@ -41,7 +41,15 @@
     el('footer', {}, input, mic, stopBtn));
   const link = el('link', { rel: 'stylesheet', href: '/web/jarvis.css' });
   document.head.append(link);
-  document.body.append(orb, panel);
+  /* Phone app (/m): the panel fills its tab and stays open; the orb sits on top of the conversation
+     and toggles the microphone instead of the panel. */
+  const mobileHost = document.getElementById('m-jarvis');
+  if (mobileHost) {
+    panel.classList.add('open');
+    panel.insertBefore(el('div', { class: 'jv-orbwrap' }, orb), log);
+    orb.setAttribute('aria-label', 'Parler à Jarvis');
+    mobileHost.append(panel);
+  } else document.body.append(orb, panel);
 
   const setOrb = (s) => { orb.className = s || ''; };
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -50,7 +58,10 @@
   const showPartial = (t) => { if (!partial) partial = add('jv-partial', ''); partial.textContent = t; scroll(); };
   const clearPartial = () => { if (partial) { partial.remove(); partial = null; } };
 
-  orb.addEventListener('click', () => { panel.classList.toggle('open'); if (panel.classList.contains('open')) input.focus(); });
+  orb.addEventListener('click', () => {
+    if (mobileHost) { mic.click(); return; }
+    panel.classList.toggle('open'); if (panel.classList.contains('open')) input.focus();
+  });
   document.addEventListener('keydown', (e) => { if (e.altKey && (e.key === 'j' || e.key === 'J')) { e.preventDefault(); orb.click(); } });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const t = input.value.trim(); if (t) { input.value = ''; void ipc.invoke('jarvis:say', t); } }

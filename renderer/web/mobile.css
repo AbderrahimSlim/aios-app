@@ -1,0 +1,250 @@
+/* HOST MODE — the phone app (/m). Dark only. Tokens are the ones jarvis.css reads from theme.css,
+   which this page does not load. Rules on #jarvis-* are prefixed with body.aios-mobile so they win
+   over jarvis.css, which is added to the page after this file. */
+:root {
+  --bg: #0E1116; --surface: #161B22; --surface-2: #1C222B; --line: #262D37;
+  --ink: #E6EDF3; --ink-2: #C9D1D9; --muted: #9AA4B2; --accent: #5CC8FF; --accent-ink: #8FDBFF; --accent-soft: #3A1B1B;
+  --chat-user-bg: #1F6FB2; --chat-on-accent: #0E1116; --live: #3FB950; --warn: #F0A04B; --danger: #FFB4AE;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --font: -apple-system, BlinkMacSystemFont, Inter, system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* html shows through only where body does not reach: give it the tab bar's colour, so a short body
+   never reads as an empty band. */
+html { margin: 0; height: 100%; background: #12161C; }
+body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--font); }
+/* Fixed to the four edges of the window iOS gives the app. With a TRANSLUCENT status bar
+   (black-translucent), an installed app got a window placed at the top of the screen but one status
+   bar too short, leaving a band under the tab bar that the page cannot paint (sizing the page to the
+   screen only slid the tab bar under it). mobile.html therefore asks for an OPAQUE status bar. */
+body.aios-mobile {
+  position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+a { color: var(--accent); }
+button { font: inherit; }
+[hidden] { display: none !important; }
+.m-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.m-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px 10px; }
+.m-titles h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.m-titles p { margin: 2px 0 0; font-size: 13px; color: var(--muted); min-height: 1em; }
+.m-cockpit {
+  min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink-2); font-size: 13px; font-weight: 500; text-decoration: none;
+}
+
+.m-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.m-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.m-scroll { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 16px 16px; gap: 14px; }
+.m-hint { margin: 0 4px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.m-empty { padding: 24px 8px; margin: 0; text-align: center; color: var(--muted); font-size: 15px; }
+
+/* Buttons */
+.m-btn, .m-btn-accent {
+  min-height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 14px; cursor: pointer;
+  font-size: 15px; font-weight: 500; padding: 0 14px;
+}
+.m-btn { background: var(--surface-2); border: 1px solid var(--line); color: var(--ink); }
+.m-btn-accent { background: var(--accent); border: 0; color: var(--chat-on-accent); font-size: 16px; font-weight: 600; }
+.m-btn-small { min-height: 40px; font-size: 13px; border-radius: 12px; }
+.m-btn-wide { width: 100%; }
+.m-icon-btn { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: none; border: 0; color: var(--ink); cursor: pointer; flex: none; }
+
+/* Actions tab */
+.m-primary { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+.m-primary .m-btn-accent span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.m-card-h { margin: 0 0 4px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--muted); }
+.m-card-h svg { color: var(--accent); }
+.m-row {
+  display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 14px; width: 100%; text-align: left;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px; color: var(--ink); cursor: pointer;
+}
+.m-row svg { color: var(--ink-2); flex: none; }
+.m-row-label { flex: 1; min-width: 0; font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-row-meta { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.m-row-count { font-size: 13px; font-weight: 700; color: var(--accent); }
+
+/* Sessions tab */
+.m-list { display: flex; flex-direction: column; gap: 10px; }
+.m-session {
+  display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 14px; width: 100%; text-align: left;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px; color: var(--ink); cursor: pointer;
+}
+.m-session.disabled { cursor: default; opacity: .6; }
+.m-session.off .m-dot { opacity: .8; }
+.m-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--muted); }
+.m-session.live .m-dot { background: var(--live); }
+.m-session.warn .m-dot { background: var(--warn); }
+.m-session-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.m-session-name { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-session-detail { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-session-status { font-size: 12px; font-weight: 600; color: var(--muted); flex: none; }
+.m-session.live .m-session-status { color: var(--live); }
+.m-session.warn .m-session-status { color: var(--warn); }
+
+/* Today */
+.m-note { display: flex; flex-direction: column; gap: 2px; font-size: 15px; line-height: 1.45; }
+.m-note h2 { margin: 18px 0 6px; font-size: 17px; font-weight: 600; }
+.m-note h2:first-child { margin-top: 0; }
+.m-note h3 { margin: 12px 0 4px; font-size: 15px; font-weight: 600; color: var(--ink-2); }
+.m-note p { margin: 4px 0; color: var(--ink-2); }
+.m-note .m-li { margin: 2px 0; padding-left: 14px; position: relative; color: var(--ink-2); }
+.m-note .m-li::before { content: '•'; position: absolute; left: 0; color: var(--muted); }
+.m-note .m-task { display: flex; align-items: flex-start; gap: 12px; min-height: 40px; padding: 6px 0; }
+.m-note .m-task input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--live); flex: none; }
+.m-note .m-task.done span { color: var(--muted); text-decoration: line-through; }
+
+/* Tab bar */
+.m-tabs {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #12161C; border-top: 1px solid var(--surface-2);
+  padding: 6px 4px max(8px, env(safe-area-inset-bottom));
+}
+.m-tabs button {
+  min-height: 50px; background: none; border: 0; color: var(--muted); cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11px; font-weight: 600;
+}
+.m-tabs button[aria-current="page"] { color: var(--accent); }
+
+/* Full-screen overlays: the picker and the session */
+.m-overlay {
+  position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+.m-ov-head { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px 6px; }
+.m-ov-border { border-bottom: 1px solid var(--surface-2); }
+.m-ov-titles { flex: 1; min-width: 0; }
+.m-ov-titles h2 { margin: 0; font-size: 20px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-ov-titles p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.m-ov-titles p.m-live { color: var(--live); font-weight: 600; font-size: 12px; }
+
+.m-search { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 4px 16px 10px; padding: 0 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; color: var(--muted); }
+.m-search input { flex: 1; min-width: 0; background: none; border: 0; color: var(--ink); font: inherit; font-size: 16px; outline: none; }
+.m-picker-list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 16px 16px; display: flex; flex-direction: column; gap: 6px; }
+.m-pick-group { margin: 12px 4px 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.14em; color: var(--muted); }
+.m-pick {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 56px; padding: 10px 14px; width: 100%; text-align: left;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 14px; color: var(--ink); cursor: pointer;
+}
+.m-pick.on { background: #12355C; border-color: var(--accent); }
+.m-pick-name { font-size: 15px; font-weight: 600; }
+.m-pick-desc { font-size: 13px; color: var(--muted); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m-sheet {
+  padding: 14px 16px max(16px, env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line);
+  border-radius: 20px 20px 0 0; display: flex; flex-direction: column; gap: 10px;
+}
+.m-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.m-field input, .m-field textarea {
+  box-sizing: border-box; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; font: inherit; font-size: 16px; font-weight: 400; resize: none;
+}
+.m-field textarea { min-height: 64px; }
+
+/* Session screen */
+.m-term-host { flex: 1; min-height: 0; position: relative; background: #0A0D12; }
+.m-term { position: absolute; inset: 6px 4px 6px 8px; }
+.m-term .xterm { height: 100%; }
+.m-term { touch-action: none; }   /* the page must not pan: swipes scroll the terminal (mobile.js) */
+/* Chat view */
+.m-chat { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 14px 8px; display: flex; flex-direction: column; gap: 10px; }
+.m-chat-list, .m-chat-box { display: flex; flex-direction: column; gap: 10px; }
+.m-chat-earlier { align-self: center; }
+.m-chat-state { margin: 8px 4px; text-align: center; font-size: 13px; color: var(--muted); }
+.m-msg { max-width: 88%; padding: 10px 14px; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.m-msg-me { align-self: flex-end; background: var(--chat-user-bg); color: #FFFFFF; border-radius: 18px 18px 4px 18px; white-space: pre-wrap; }
+.m-msg-claude { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 18px 18px 18px 4px; }
+.m-msg-claude p { margin: 0 0 8px; } .m-msg-claude p:last-child { margin-bottom: 0; }
+.m-msg-claude ul, .m-msg-claude ol { margin: 0 0 8px; padding-left: 20px; }
+.m-msg-claude blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 3px solid var(--line); color: var(--ink-2); }
+.m-msg-claude code { font-family: var(--mono); font-size: 13px; background: var(--surface-2); padding: 1px 5px; border-radius: 6px; }
+.m-msg-claude .m-md-h { font-weight: 700; }
+.m-code { margin: 0 0 8px; padding: 10px 12px; background: #0A0D12; border: 1px solid var(--line); border-radius: 10px; font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre; overflow-x: auto; color: var(--ink-2); }
+.m-table { margin: 0; border-radius: 0; border-width: 0 0 1px; }
+.m-stream { opacity: .85; }
+.m-msg-error { align-self: stretch; background: #3A1B1B; border: 1px solid #7A2E2E; color: var(--danger); border-radius: 14px; white-space: pre-wrap; }
+.m-sys { align-self: center; max-width: 92%; font-size: 12px; color: var(--muted); text-align: center; white-space: pre-wrap; }
+.m-tool { align-self: stretch; font-size: 13px; }
+.m-tool summary { list-style: none; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 6px; color: var(--muted); cursor: pointer; }
+.m-tool summary::-webkit-details-marker { display: none; }
+.m-tool-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.m-tool.ok .m-tool-dot { background: var(--live); }
+.m-tool.error .m-tool-dot { background: #FF7B72; }
+.m-tool.running .m-tool-dot { background: var(--warn); animation: m-blink 1s ease-in-out infinite; }
+@keyframes m-blink { 50% { opacity: .3; } }
+.m-tool-name { font-family: var(--mono); font-weight: 600; color: var(--ink-2); flex: none; }
+.m-tool-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.m-tool-out { margin: 4px 0 4px 22px; padding: 8px 10px; max-height: 240px; overflow: auto; background: #0A0D12; border: 1px solid var(--line); border-radius: 10px; font-family: var(--mono); font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; color: var(--ink-2); }
+.m-turn { display: flex; align-items: center; gap: 10px; padding: 6px 14px; font-size: 13px; color: var(--ink-2); border-top: 1px solid var(--surface-2); }
+.m-turn .m-btn { margin-left: auto; min-height: 36px; }
+.m-turn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); animation: m-blink 1s ease-in-out infinite; }
+.m-prompt { padding: 10px 12px 4px; border-top: 1px solid var(--surface-2); display: flex; flex-direction: column; gap: 8px; max-height: 45%; overflow-y: auto; }
+.m-prompt-q { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4; color: var(--ink); }
+.m-prompt-opts { display: flex; flex-direction: column; gap: 6px; }
+.m-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-height: 46px; padding: 8px 12px; text-align: left; width: 100%;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; color: var(--ink); cursor: pointer; }
+.m-opt.on { border-color: var(--accent); }
+.m-opt:disabled { opacity: .5; }
+.m-opt-label { font-size: 15px; font-weight: 600; }
+.m-opt-desc { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .m-tool.running .m-tool-dot, .m-turn-dot { animation: none; } }
+
+.m-keys { display: flex; gap: 8px; padding: 10px 12px 6px; overflow-x: auto; border-top: 1px solid var(--surface-2); -webkit-overflow-scrolling: touch; }
+.m-keys button {
+  flex: none; min-width: 44px; min-height: 40px; padding: 0 12px; border-radius: 10px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-size: 14px; font-weight: 600;
+}
+.m-keys .m-key-danger { color: var(--danger); }
+.m-send { display: flex; align-items: flex-end; gap: 8px; padding: 6px 12px max(10px, env(safe-area-inset-bottom)); }
+.m-send-field { flex: 1; display: flex; }
+/* 16px: iOS zooms the page into any smaller text field it focuses. */
+.m-send-field textarea {
+  flex: 1; resize: none; min-height: 48px; max-height: 120px; box-sizing: border-box; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 24px; padding: 13px 16px; font: inherit; font-size: 16px;
+}
+.m-round { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+.m-round-accent { background: var(--accent); border: 0; color: var(--chat-on-accent); }
+
+.m-toast {
+  position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 84px); z-index: 60;
+  background: #2A313C; color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; font-size: 14px; line-height: 1.4;
+}
+
+/* The Jarvis panel, filling its tab */
+body.aios-mobile #jarvis-panel {
+  position: static; display: flex; flex: 1; min-height: 0; width: auto; max-height: none;
+  border: 0; border-radius: 0; box-shadow: none; background: transparent;
+}
+body.aios-mobile #jarvis-panel header { font-size: 0; border: 0; padding: 0 16px; min-height: 0; }
+body.aios-mobile #jarvis-panel header .jv-state { font-size: 13px; color: var(--muted); opacity: 1; margin-left: 0; }
+body.aios-mobile #jarvis-panel header button { font-size: 18px; min-width: 44px; min-height: 44px; margin-left: auto; }
+body.aios-mobile .jv-orbwrap { display: flex; justify-content: center; padding: 4px 0 12px; }
+body.aios-mobile #jarvis-orb {
+  position: static; width: 104px; height: 104px; border: 0;
+  background: radial-gradient(circle at 35% 30%, #BDEBFF 0%, #5CC8FF 38%, #1F6FB2 78%, #12355C 100%);
+}
+body.aios-mobile #jarvis-orb.listening { animation: m-pulse 1.6s ease-out infinite; }
+body.aios-mobile #jarvis-orb.speaking { animation: m-pulse .8s ease-out infinite; }
+body.aios-mobile #jarvis-orb.thinking { animation: jarvis-spin 1.6s linear infinite; background: conic-gradient(#5CC8FF, #12355C, #5CC8FF); }
+@keyframes m-pulse { 0% { box-shadow: 0 0 0 0 rgba(92,200,255,.45); } 70% { box-shadow: 0 0 0 24px rgba(92,200,255,0); } 100% { box-shadow: 0 0 0 0 rgba(92,200,255,0); } }
+@media (prefers-reduced-motion: reduce) { body.aios-mobile #jarvis-orb { animation: none !important; } }
+body.aios-mobile #jarvis-log { padding: 4px 16px 12px; gap: 10px; font-size: 15px; line-height: 1.45; }
+body.aios-mobile .jv-msg { max-width: 85%; padding: 10px 14px; }
+body.aios-mobile .jv-user { background: var(--chat-user-bg); color: #FFFFFF; border-radius: 18px 18px 4px 18px; }
+body.aios-mobile .jv-jarvis { background: var(--surface); border: 1px solid var(--line); border-radius: 18px 18px 18px 4px; }
+body.aios-mobile .jv-tool { font-family: var(--mono); font-size: 12px; color: var(--muted); opacity: 1; }
+body.aios-mobile .jv-error { color: var(--danger); }
+body.aios-mobile #jarvis-panel .jv-opts { padding: 8px 16px 0; gap: 14px; font-size: 13px; color: var(--muted); opacity: 1; border-top: 1px solid var(--surface-2); flex-wrap: wrap; }
+body.aios-mobile #jarvis-panel .jv-opts select { min-height: 36px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; font: inherit; }
+body.aios-mobile #jarvis-panel footer { border: 0; padding: 8px 16px 10px; gap: 8px; align-items: flex-end; }
+body.aios-mobile #jarvis-input { height: auto; min-height: 48px; border-radius: 24px; padding: 13px 16px; font-size: 16px; background: var(--surface); }
+body.aios-mobile #jarvis-panel footer button { width: 48px; height: 48px; min-width: 48px; border-radius: 50%; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+body.aios-mobile #jarvis-mic { background: var(--accent); color: var(--chat-on-accent); border-color: var(--accent); }
+body.aios-mobile #jarvis-mic.on { background: var(--warn); border-color: var(--warn); }
+
+/* web-shell.js's connection pill: top centre here, clear of the tab bar. */
+body.aios-mobile #aios-host-status {
+  top: calc(env(safe-area-inset-top) + 6px) !important; bottom: auto !important;
+  right: auto !important; left: 50% !important; transform: translateX(-50%); font-size: 13px !important; font-weight: 600;
+}

@@ -1,0 +1,17 @@
+{
+  "name": "AIOS",
+  "short_name": "AIOS",
+  "description": "Jarvis, les sessions et la note du jour de l'hôte AIOS.",
+  "lang": "fr",
+  "start_url": "/m",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E1116",
+  "theme_color": "#0E1116",
+  "icons": [
+    { "src": "/web/icons/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/web/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/web/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

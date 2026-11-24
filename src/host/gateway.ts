@@ -18,6 +18,7 @@ import { FakeWebContents, ipcMain, setBroadcast } from './electronShim';
 import { ProxyPty, PtyBridge } from './ptyBridge';
 import { NodeBroker } from './nodes';
 import { asClientMsg, decode, encode, HostMsg, LIMITS, PROTOCOL_VERSION } from './protocol';
+import { listSessions, safeHost, safeNext } from './mobile';
 
 const COOKIE = 'aios_host';
 /* SameSite=Lax, not Strict: Strict withholds the cookie when the page is opened from a link on another site
@@ -37,6 +38,7 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
   '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.map': 'application/json', '.txt': 'text/plain; charset=utf-8',
+  '.webmanifest': 'application/manifest+json',
 };
 
 export interface GatewayOptions { port: number; bind: string; home: string; platform: string; version: string; }
@@ -122,6 +124,11 @@ class PtyRouter {
   list(): Array<{ id: number; name: string; attached: boolean }> {
     return [...this.ptys.values()].map((r) => ({ id: r.id, name: r.name, attached: !!r.owner }));
   }
+  /** The same list as seen by one client: whether each pty is its own (the phone app may only open a
+      pty that is free or already its own — opening one another page holds would start a duplicate). */
+  listFor(wc: unknown): Array<{ id: number; name: string; attached: boolean; mine: boolean }> {
+    return [...this.ptys.values()].map((r) => ({ id: r.id, name: r.name, attached: !!r.owner, mine: !!r.owner && r.owner.wc === wc }));
+  }
 }
 
 function isLoopbackHost(host: string | undefined): boolean {
@@ -135,7 +142,7 @@ function under(base: string, rel: string): string | null {
   return p === base || p.startsWith(base + path.sep) ? p : null;
 }
 
-function pairPage(error: string): string {
+function pairPage(error: string, next = '/'): string {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AIOS — appairer cet appareil</title>
 <style>body{font:16px system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0}
@@ -146,6 +153,7 @@ button{margin-top:1rem;width:100%;padding:.7rem;border:0;border-radius:8px;backg
 <p>Sur l'hôte, lance <code>npm run host -- pair</code> et saisis le code affiché (valable 10 min, usage unique).<br><i>On the host, run <code>npm run host -- pair</code> and type the code.</i></p>
 ${error ? `<p class="err">${error}</p>` : ''}
 <input name="code" autocomplete="one-time-code" autofocus placeholder="ABCD-EFGH" maxlength="12">
+<input type="hidden" name="next" value="${safeNext(next)}">
 <button type="submit">Appairer</button></form></body></html>`;
 }
 
@@ -190,6 +198,10 @@ export class Gateway {
     });
     this.router = new PtyRouter(toAll, (c, ch, a) => this.emit(c, ch, a));
     this.router.addForeign(bridge.orphans);
+    /* The phone app's Sessions tab: the Claude Code sessions registered on this machine (read only), and
+       the host's own terminals, each marked free / this client's / held by another page. */
+    ipcMain.handle('host:sessions', () => listSessions());
+    ipcMain.handle('host:ptys', (e: { sender: unknown }) => this.router.listFor(e.sender));
   }
 
   /** Live ptys and whether a client is attached (for the CLI and health). */
@@ -409,18 +421,30 @@ export class Gateway {
           return;
         }
         res.writeHead(303, {
-          ...headers, Location: '/',
+          ...headers, Location: safeNext(form.get('next')),
           'Set-Cookie': deviceCookie(cookie, secure),
         });
         res.end();
         return;
       }
       /* Already paired: straight to the App, never a second pairing of the same browser. */
+      const next = safeNext(url.searchParams.get('next'));
       const known = this.devices.verify(parseCookies(req.headers.cookie)[COOKIE]);
-      if (known && known.role !== 'node') { res.writeHead(302, { ...headers, Location: '/' }); res.end(); return; }
+      if (known && known.role !== 'node') { res.writeHead(302, { ...headers, Location: next }); res.end(); return; }
       res.writeHead(200, { ...pageHeaders, 'Content-Type': MIME['.html'] });
-      res.end(pairPage(''));
+      res.end(pairPage('', next));
       return;
+    }
+
+    /* The phone app's manifest and icons, BEFORE the device check: iOS fetches them when the page is
+       added to the home screen, and they say nothing about the host. */
+    if (url.pathname === '/manifest.webmanifest') {
+      return this.serveFile(path.join(APP_ROOT, 'renderer', 'web', 'manifest.webmanifest'), res, headers);
+    }
+    if (url.pathname.startsWith('/web/icons/')) {
+      const icon = under(path.join(APP_ROOT, 'renderer', 'web', 'icons'), url.pathname.slice('/web/icons/'.length));
+      if (icon && icon.endsWith('.png')) return this.serveFile(icon, res, headers);
+      res.writeHead(404, headers); res.end(); return;
     }
 
     /* Loopback-only API for host-side tools (the aios-nodes MCP server Jarvis uses), with a token file
@@ -441,8 +465,16 @@ export class Gateway {
 
     const viewer = this.devices.verify(parseCookies(req.headers.cookie)[COOKIE]);
     if (!viewer || viewer.role === 'node') {
-      res.writeHead(302, { ...headers, Location: '/pair' });
+      /* The installed phone app pairs INSIDE itself (an iOS home-screen app may not share Safari's cookies),
+         then comes back to /m. */
+      res.writeHead(302, { ...headers, Location: url.pathname === '/m' ? '/pair?next=%2Fm' : '/pair' });
       res.end();
+      return;
+    }
+    if (url.pathname === '/m') {
+      const html = this.mobileHtml(req.headers.host);
+      res.writeHead(200, { ...headers, 'Content-Type': MIME['.html'], 'Set-Cookie': deviceCookie(parseCookies(req.headers.cookie)[COOKIE], secure) });
+      res.end(html);
       return;
     }
     if (url.pathname === '/') {
@@ -552,6 +584,22 @@ ${step(false, '3. Ajouter le connecteur dans Claude', `<p>claude.ai → Paramèt
     if (m.op === 'cancel' && m.id) return reply({ ok: this.nodes.cancel(m.id) });
     if (m.op === 'call' && m.capability) return reply(await this.nodes.call(String(m.capability), m.args || {}, m.target ? String(m.target) : null));
     res.writeHead(400, headers); res.end();
+  }
+
+  private serveFile(file: string, res: http.ServerResponse, headers: Record<string, string>): void {
+    fs.stat(file, (err, st) => {
+      if (err || !st.isFile()) { res.writeHead(404, headers); res.end(); return; }
+      res.writeHead(200, { ...headers, 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Content-Length': st.size });
+      fs.createReadStream(file).pipe(res);
+    });
+  }
+
+  /** The phone app. Its CSP names the socket's own wss:// origin explicitly, because older WebKit did
+      not count ws:/wss: as `'self'`. */
+  private mobileHtml(host: string | undefined): string {
+    const h = safeHost(host);
+    const ws = h ? ` wss://${h} ws://${h}` : '';
+    return fs.readFileSync(path.join(APP_ROOT, 'renderer', 'web', 'mobile.html'), 'utf8').replaceAll('{{CONNECT}}', `'self'${ws}`);
   }
 
   private text(res: http.ServerResponse, type: string, body: string): void {

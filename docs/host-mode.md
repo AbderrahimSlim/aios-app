@@ -103,6 +103,36 @@ untick it to interrupt Jarvis by speaking. "Stop", "tais-toi", "annule" only int
 Agent launches from Jarvis go through the spawn inbox, which the host fulfils by opening a pane in a
 connected page: with no page open, the request waits (headless fulfilment is plan phase 3).
 
+## Phone app (`/m`)
+
+A PWA for the phone, served by the host. **Install:** iPhone on the tailnet, open
+`https://<host>:8443/m` in Safari → Share → *Add to Home Screen*. A Safari already paired usually hands
+its cookie to the installed app (observed on iOS 27); if the app shows the pairing page, pair **inside the
+app**: on the host, `npm run host -- pair`, type the code; pairing returns to `/m`.
+
+- **Four tabs:** Jarvis (the same panel as the desktop, full screen, the orb toggles the mic) ·
+  Actions (the cockpit's shortcuts: launch the primary, resume, `/today` `/close-session` `/close-day`,
+  tasks for agents, an agent, a skill, a command, ingest, a named session) · Today (today's daily note,
+  read only; ask Jarvis to tick a task) · Sessions (the host's terminals, plus the sessions registered in
+  `~/.claude/sessions/` elsewhere, e.g. VS Code, shown but not openable). *Cockpit* opens the full UI.
+- **Session screen:** every shortcut launches exactly what the cockpit launches (`claude --name <name>
+  '<prompt>'` in a host terminal) and opens it here. **Chat** by default: the cockpit's own chat skin
+  (`chatSkin:watch` with the session id found in the registry by name or former name), Claude's dialogs
+  as buttons (the hidden xterm, kept at 100×40, feeds `chatSkin:screen`), "Interrompre" = Esc.
+  **Terminal** on demand: live xterm (finger scroll), quick keys (1 2 3 ↑ ↓ Enter Esc Tab Ctrl-C).
+  Both send a line pasted, then submitted. *Fermer* closes the screen; the session keeps
+  running on the host. A terminal held by another page (a PC's cockpit) is refused rather than opened:
+  opening it would start a second session under the same name (`host:ptys` says which are free).
+- **Files:** `renderer/web/mobile.{html,css,js}`, `manifest.webmanifest`, `icons/`; helpers in
+  `src/host/mobile.ts` (`host:sessions`, the `?next=` allow-list, the CSP host check); `host:ptys` in the
+  gateway.
+- **Security:** `/m` needs a paired device like every page. Only the manifest and the icons are served
+  before the device check (iOS fetches them at install; they say nothing about the host). `?next=` is a
+  fixed allow-list (`/`, `/m`), never a URL from the request. The page's CSP names the socket's own
+  `wss://` origin, built from a Host header that must be a plain `host[:port]`.
+- **Limits:** no service worker (useless without the host; the connection pill says so). The text box is
+  16 px so iOS does not zoom on focus. The mic needs HTTPS, which `tailscale serve` provides.
+
 ## Autonomy (plan phase 3)
 
 - **Bus requests go to one place.** "Open / send to / close a session" go to the client that acted last,

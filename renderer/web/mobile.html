@@ -1,0 +1,206 @@
+<!doctype html>
+<!-- HOST MODE — the phone app, served at /m (src/host/gateway.ts). Installed from Safari with
+     "Add to Home Screen"; the same socket and glassShell as the desktop page (boot, preload,
+     web-shell), then the Jarvis panel and four tabs. The CSP's connect-src is filled by the gateway. -->
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src {{CONNECT}}; media-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<!-- Opaque, not black-translucent: see mobile.css (an empty band under the tab bar on iOS). -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<meta name="apple-mobile-web-app-title" content="AIOS" />
+<meta name="theme-color" content="#0E1116" />
+<title>AIOS</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="apple-touch-icon" href="/web/icons/icon-180.png" />
+<link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css" />
+<link rel="stylesheet" href="/web/mobile.css" />
+</head>
+<body class="aios-mobile">
+<header class="m-head">
+  <div class="m-titles">
+    <h1 id="m-title">Jarvis</h1>
+    <p id="m-sub"></p>
+  </div>
+  <a class="m-cockpit" href="/renderer/index.html">Cockpit
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg>
+  </a>
+</header>
+
+<main class="m-main">
+  <section id="m-jarvis" class="m-tab" data-tab="jarvis" aria-label="Jarvis"></section>
+
+  <section id="m-actions" class="m-tab m-scroll" data-tab="actions" aria-label="Actions" hidden>
+    <div class="m-primary">
+      <button type="button" class="m-btn-accent" data-act="primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>
+        <span id="m-primary-label">Lancer la session principale</span>
+      </button>
+      <button type="button" class="m-btn" data-act="resume">Reprendre</button>
+    </div>
+
+    <section class="m-card">
+      <h2 class="m-card-h">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M14 20v-6h6"/></svg>
+        QUOTIDIEN
+      </h2>
+      <button type="button" class="m-row" data-act="today">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <span class="m-row-label">Planifier ma journée</span><span class="m-row-meta">/today</span>
+      </button>
+      <button type="button" class="m-row" data-act="close-session">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4H5v16h4"/><path d="M14 8l4 4-4 4"/><path d="M18 12H9"/></svg>
+        <span class="m-row-label">Clôturer la session</span><span class="m-row-meta">/close-session</span>
+      </button>
+      <button type="button" class="m-row" data-act="close-day">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+        <span class="m-row-label">Clôturer la journée</span><span class="m-row-meta">/close-day</span>
+      </button>
+    </section>
+
+    <section class="m-card">
+      <h2 class="m-card-h">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
+        RAPIDE
+      </h2>
+      <button type="button" class="m-row" data-act="tasks">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>
+        <span class="m-row-label">Tâches pour les agents</span><span class="m-row-count" data-count="suggestions"></span>
+      </button>
+      <button type="button" class="m-row" data-act="agent">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4"/><path d="M9 13h.01M15 13h.01"/></svg>
+        <span class="m-row-label">Lancer un agent</span><span class="m-row-count" data-count="agents"></span>
+      </button>
+      <button type="button" class="m-row" data-act="skill">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5"/></svg>
+        <span class="m-row-label">Charger un skill</span><span class="m-row-count" data-count="skills"></span>
+      </button>
+      <button type="button" class="m-row" data-act="command">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"/></svg>
+        <span class="m-row-label">Exécuter une commande</span><span class="m-row-count" data-count="commands"></span>
+      </button>
+      <button type="button" class="m-row" data-act="ingest">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M4 20h16"/></svg>
+        <span class="m-row-label">Ingérer du contenu</span><span class="m-row-meta">→ vault</span>
+      </button>
+      <button type="button" class="m-row" data-act="session">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="15" height="14" rx="3"/><path d="M7 10l2.5 2L7 14"/><path d="M21 3v6M18 6h6"/></svg>
+        <span class="m-row-label">Lancer une session</span><span class="m-row-meta">nom · tâche</span>
+      </button>
+    </section>
+  </section>
+
+  <section id="m-today" class="m-tab m-scroll" data-tab="today" aria-label="Aujourd'hui" hidden>
+    <div id="m-today-note" class="m-note"></div>
+    <p class="m-hint">Note du jour en lecture seule. Pour cocher, demande à Jarvis.</p>
+  </section>
+
+  <section id="m-sessions" class="m-tab m-scroll" data-tab="sessions" aria-label="Sessions" hidden>
+    <div id="m-sessions-list" class="m-list" aria-live="polite"></div>
+    <p class="m-hint">Toucher une session l'ouvre ici. Les sessions ouvertes dans VS Code ou dans le cockpit d'un PC restent là-bas.</p>
+  </section>
+</main>
+
+<nav class="m-tabs" aria-label="Navigation principale">
+  <button type="button" data-go="jarvis" aria-current="page">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg>
+    Jarvis
+  </button>
+  <button type="button" data-go="actions">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>
+    Actions
+  </button>
+  <button type="button" data-go="sessions">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 10l3 2-3 2"/><path d="M13 15h4"/></svg>
+    Sessions
+  </button>
+  <button type="button" data-go="today">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18"/><path d="M8 3v4"/><path d="M16 3v4"/></svg>
+    Aujourd’hui
+  </button>
+</nav>
+
+<!-- A list to pick from (agents, skills, commands, tasks), then an optional detail before launch. -->
+<div id="m-picker" class="m-overlay" role="dialog" aria-modal="true" aria-labelledby="m-picker-title" hidden>
+  <header class="m-ov-head">
+    <button type="button" class="m-icon-btn" data-close="picker" aria-label="Retour">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+    <div class="m-ov-titles"><h2 id="m-picker-title"></h2><p id="m-picker-sub"></p></div>
+  </header>
+  <label class="m-search" id="m-picker-searchwrap">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <span class="m-sr">Chercher</span>
+    <input type="search" id="m-picker-search" placeholder="Chercher…" autocomplete="off" />
+  </label>
+  <div id="m-picker-list" class="m-picker-list"></div>
+  <form id="m-picker-sheet" class="m-sheet" hidden>
+    <label id="m-sheet-name-wrap" class="m-field" hidden>Nom de la session
+      <input type="text" id="m-sheet-name" autocomplete="off" autocapitalize="off" placeholder="ex. veille-azure" />
+    </label>
+    <label class="m-field"><span id="m-sheet-label">Tâche</span>
+      <textarea id="m-sheet-text" rows="2"></textarea>
+    </label>
+    <button type="submit" class="m-btn-accent m-btn-wide">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>
+      Lancer la session
+    </button>
+  </form>
+</div>
+
+<!-- One Claude Code session on the host: its live terminal, quick keys and a line to send. -->
+<div id="m-session" class="m-overlay" role="dialog" aria-modal="true" aria-labelledby="m-session-name" hidden>
+  <header class="m-ov-head m-ov-border">
+    <button type="button" class="m-icon-btn" data-close="session" aria-label="Retour">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+    <div class="m-ov-titles"><h2 id="m-session-name"></h2><p id="m-session-state" class="m-live">En cours sur l'hôte</p></div>
+    <button type="button" class="m-btn m-btn-small" id="m-view-toggle" aria-pressed="false">Terminal</button>
+    <button type="button" class="m-btn m-btn-small" data-close="session">Fermer</button>
+  </header>
+  <!-- Chat view: the session's transcript as messages (host chatSkin), its dialogs as buttons. -->
+  <div id="m-chat" class="m-chat" aria-live="polite">
+    <button type="button" id="m-chat-earlier" class="m-btn m-btn-small m-chat-earlier" hidden>Messages plus anciens</button>
+    <div id="m-chat-list" class="m-chat-list"></div>
+    <div id="m-chat-stream" class="m-msg m-msg-claude m-stream" hidden></div>
+    <p id="m-chat-state" class="m-chat-state"></p>
+  </div>
+  <div id="m-term-host" class="m-term-host"></div>
+  <div id="m-turn" class="m-turn" hidden>
+    <span class="m-turn-dot" aria-hidden="true"></span><span>Claude travaille…</span>
+    <button type="button" class="m-btn m-btn-small" id="m-interrupt">Interrompre</button>
+  </div>
+  <div id="m-prompt" class="m-prompt" hidden>
+    <p id="m-prompt-q" class="m-prompt-q"></p>
+    <div id="m-prompt-opts" class="m-prompt-opts"></div>
+  </div>
+  <div class="m-keys" id="m-keys" role="group" aria-label="Touches rapides">
+    <button type="button" data-key="1">1</button><button type="button" data-key="2">2</button><button type="button" data-key="3">3</button>
+    <button type="button" data-key="up" aria-label="Flèche haut">↑</button><button type="button" data-key="down" aria-label="Flèche bas">↓</button>
+    <button type="button" data-key="enter">Entrée</button><button type="button" data-key="esc">Échap</button>
+    <button type="button" data-key="tab">Tab</button><button type="button" data-key="ctrlc" class="m-key-danger">Ctrl-C</button>
+  </div>
+  <form id="m-send" class="m-send">
+    <label class="m-send-field"><span class="m-sr">Écrire à la session</span>
+      <textarea id="m-send-text" rows="1" placeholder="Écrire à la session…"></textarea>
+    </label>
+    <button type="submit" class="m-round m-round-accent" aria-label="Envoyer">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg>
+    </button>
+  </form>
+</div>
+
+<div id="m-toast" class="m-toast" role="status" hidden></div>
+
+<script src="/web/boot.js"></script>
+<script src="/web/preload.js"></script>
+<script src="/web/web-shell.js"></script>
+<script src="/node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="/node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="/web/mobile.js"></script>
+<script src="/web/jarvis.js"></script>
+</body>
+</html>
