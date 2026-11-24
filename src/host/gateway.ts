@@ -229,6 +229,7 @@ export class Gateway {
     setInterval(() => {
       const live = new Set(this.devices.list().map((d) => d.id));
       for (const c of this.clients) if (!live.has(c.deviceId)) { this.out(c, { t: 'bye', reason: 'revoked' }); c.ws.close(4001, 'revoked'); }
+      this.nodes.dropMissing(live);
     }, 3000).unref();
     return new Promise((resolve, reject) => {
       this.server.once('error', reject);

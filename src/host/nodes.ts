@@ -106,13 +106,18 @@ export class NodeBroker {
 
   private resolveNode(r: Req): NodeConn | { error: string } | null {
     const online = [...this.nodes.values()].filter((n) => n.caps.some((c) => c.name === r.cap));
-    const want = r.target || this.activeMachine();
-    if (want) {
-      const hit = [...this.nodes.values()].find((n) => n.id === want || n.machine.toLowerCase() === want.toLowerCase());
-      if (!hit) return null;                                  // that node is offline: wait for it
+    const find = (want: string) => [...this.nodes.values()].find((n) => n.id === want || n.machine.toLowerCase() === want.toLowerCase());
+    if (r.target) {
+      const hit = find(r.target);
+      if (!hit) return null;                                  // the machine asked for is offline: wait for it
       if (!hit.caps.some((c) => c.name === r.cap)) return { error: `${hit.machine} does not offer ${r.cap}` };
       return hit;
     }
+    /* The machine of the speaking device, when it is an online node; a machine the panel remembers but
+       that is not online falls back to the rules below instead of waiting for it. */
+    const active = this.activeMachine();
+    const hit = active ? find(active) : undefined;
+    if (hit) return hit.caps.some((c) => c.name === r.cap) ? hit : { error: `${hit.machine} does not offer ${r.cap}` };
     if (online.length === 1) return online[0];
     /* Wait only when NO node is online (one may come); nodes online without it is an answer now. */
     if (online.length === 0) return this.nodes.size ? { error: `no online node offers ${r.cap}` } : null;
@@ -127,6 +132,11 @@ export class NodeBroker {
       this.pump();
       this.onChange();
     });
+  }
+
+  /** Close the sockets of nodes whose device was revoked (RFC §7: revocation closes open connections). */
+  dropMissing(liveDeviceIds: Set<string>): void {
+    for (const n of [...this.nodes.values()]) if (!liveDeviceIds.has(n.deviceId)) n.ws.close(4001, 'revoked');
   }
 
   cancel(id: string): boolean {

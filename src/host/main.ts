@@ -104,7 +104,7 @@ async function start(): Promise<void> {
     const roots = (await ipcMain.handlers.get('fs:roots')?.({ sender: null })) as { framework?: string | null } | undefined;
     if (roots?.framework) {
       const framework = roots.framework;
-      const { Scheduler, activity } = await import('./scheduler');
+      const { Scheduler, activity, INBOX } = await import('./scheduler');
       const sched = new Scheduler({ framework, hostHome: HOST_HOME, isLive: (n) => gw.isLive(n), liveCount: (p) => gw.liveCount(p), askJarvis: jarvis ? (t) => jarvis!.ask(t) : undefined });
       if (process.env.AIOS_SCHEDULER !== '0') sched.start();
       const readJson = (f: string) => { try { return JSON.parse(fs.readFileSync(path.join(HOST_HOME, f), 'utf8').replace(/^\uFEFF/, '')); } catch { return {}; } };
@@ -117,10 +117,12 @@ async function start(): Promise<void> {
       if (readJson('jarvis.json').mobileSession === true) {
         const keep = () => {
           if (gw.isLive('jarvis-mobile') || sched.blocked()) return;
-          const inbox = path.join(path.dirname(HOST_HOME), 'spawn-inbox');
-          const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
-          fs.writeFileSync(path.join(inbox, `${stamp}-jarvis-mobile.json`), JSON.stringify({ name: 'jarvis-mobile', task: "Tu es la session mobile de Jarvis : l'opérateur te rejoint depuis l'app Claude (Remote Control). Lis USER.md, puis attends ses messages.", tier: 'scale', effort: 'medium' }));
-          activity(HOST_HOME, 'bus', 'session « jarvis-mobile » relancée pour l’app Claude');
+          try {
+            fs.mkdirSync(INBOX, { recursive: true });
+            const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+            fs.writeFileSync(path.join(INBOX, `${stamp}-jarvis-mobile.json`), JSON.stringify({ name: 'jarvis-mobile', task: "Tu es la session mobile de Jarvis : l'opérateur te rejoint depuis l'app Claude (Remote Control). Lis USER.md, puis attends ses messages.", tier: 'scale', effort: 'medium' }));
+            activity(HOST_HOME, 'bus', 'session « jarvis-mobile » relancée pour l’app Claude');
+          } catch (e) { console.error('[host] jarvis-mobile keep-alive:', e); }   // a timer must never crash the host
         };
         setTimeout(keep, 60_000);
         setInterval(keep, 5 * 60_000).unref();

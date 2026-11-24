@@ -55,6 +55,8 @@ export class Conductor extends EventEmitter {
   private reqSeq = 0;
   private resumeFailed = false;
   private stderrTail = '';
+  /** This process answered at least once: a later failure is not a failed resume. */
+  private gotResult = false;
 
   constructor(private readonly o: ConductorOptions) {
     super();
@@ -84,6 +86,11 @@ export class Conductor extends EventEmitter {
     this.emitEv({ type: 'status', state: 'starting' });
     const p = spawn(findClaude(), args, { cwd: this.o.workspace, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     this.proc = p;
+    this.gotResult = false;
+    this.stderrTail = '';
+    /* Writing to a child that failed to start or has exited raises EPIPE / ERR_STREAM_DESTROYED on stdin:
+       never let that become an unhandled 'error' that takes the host down. */
+    p.stdin!.on('error', () => undefined);
     let buf = '';
     p.stdout!.setEncoding('utf8');
     p.stdout!.on('data', (chunk: string) => {
@@ -97,21 +104,25 @@ export class Conductor extends EventEmitter {
     });
     p.stderr!.setEncoding('utf8');
     p.stderr!.on('data', (d: string) => { this.stderrTail = (this.stderrTail + d).slice(-2000); });
-    p.on('exit', (code) => {
+    const ended = (detail: string | undefined, error: string) => {
+      /* An old process (stopped by a reset) must not touch the state of the one that replaced it. */
+      if (this.proc !== p) return;
       this.proc = null;
       const wasBusy = this.busy;
       this.busy = false;
-      if (wasBusy) this.emitEv({ type: 'turn_done', error: `session ended (code ${code}) ${this.stderrTail.slice(-300)}` });
-      /* A resume that dies at once (unknown or broken session) is retried fresh, once. */
-      if (this.sessionId && !this.resumeFailed && /No conversation found|session/i.test(this.stderrTail)) {
+      if (wasBusy) this.emitEv({ type: 'turn_done', error });
+      /* A resume that dies before answering anything, because the conversation is unknown, is retried
+         fresh, once. Any other failure keeps the session id: the conversation is not lost. */
+      if (this.sessionId && !this.resumeFailed && !this.gotResult && /No conversation found/i.test(this.stderrTail)) {
         this.resumeFailed = true;
         this.sessionId = null;
         this.save();
       }
-      this.emitEv({ type: 'status', state: 'stopped', detail: code === 0 ? undefined : this.stderrTail.slice(-300) });
+      this.emitEv({ type: 'status', state: 'stopped', detail });
       if (this.queue.length) this.pump();
-    });
-    p.on('error', (err) => { this.emitEv({ type: 'status', state: 'stopped', detail: String(err) }); });
+    };
+    p.on('exit', (code) => ended(code === 0 ? undefined : this.stderrTail.slice(-300), `session ended (code ${code}) ${this.stderrTail.slice(-300)}`));
+    p.on('error', (err) => ended(String(err), `Jarvis could not start claude: ${String(err)}`));
     this.emitEv({ type: 'status', state: 'ready' });
   }
 
@@ -141,6 +152,7 @@ export class Conductor extends EventEmitter {
         return;
       }
       case 'result': {
+        this.gotResult = true;
         this.busy = false;
         this.emitEv({ type: 'turn_done', costUsd: m.total_cost_usd, ms: m.duration_ms, error: m.is_error ? String(m.result || m.subtype) : undefined });
         this.emitEv({ type: 'status', state: 'ready' });
@@ -186,6 +198,7 @@ export class Conductor extends EventEmitter {
 
   stop(): void {
     const p = this.proc;
+    this.busy = false;
     if (!p) return;
     this.proc = null;
     try {

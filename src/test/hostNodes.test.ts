@@ -72,6 +72,26 @@ test('a node dropping mid-call: repeatable is queued again, anything else is out
   assert.equal((await pv).ok, true);
 });
 
+test('a machine remembered by the panel but offline falls back to the only node online (review finding)', async () => {
+  const b = new NodeBroker();
+  const a = node(b, 'n1', 'BUREAU');
+  b.activeMachine = () => 'OLD-PC';
+  const p = b.call('volume.set', { level: 5 }, null);
+  await tick();
+  assert.equal(a.sent[0]?.cap, 'volume.set');
+  a.emit('message', Buffer.from(JSON.stringify({ t: 'result', id: a.sent[0].id, ok: true })), false);
+  assert.equal((await p).ok, true);
+});
+
+test('revoking a node closes its socket (review finding)', () => {
+  const b = new NodeBroker();
+  const a = node(b, 'n1', 'BUREAU');
+  node(b, 'n2', 'LAPTOP');
+  b.dropMissing(new Set(['n2']));
+  assert.equal(a.closed, true);
+  assert.deepEqual(b.list().map((n) => n.machine), ['LAPTOP']);
+});
+
 test('cancel only while queued', async () => {
   const b = new NodeBroker();
   const p = b.call('volume.set', { level: 1 }, 'OFFLINE');

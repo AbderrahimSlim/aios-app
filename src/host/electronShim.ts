@@ -289,7 +289,19 @@ export const shell = tolerant('shell', {
   openPath: async () => 'not available on the host',
   showItemInFolder: () => undefined,
   beep: () => undefined,
-  trashItem: async (p: string) => { await fs.promises.rm(p, { recursive: true, force: true }); },
+  /* "Move to trash" from a browser must stay undoable: the item is MOVED to the host's own trash folder
+     (~/.aios/host/trash/<time>-<name>), never deleted. */
+  trashItem: async (p: string) => {
+    const dir = path.join(HOST_HOME, 'trash');
+    await fs.promises.mkdir(dir, { recursive: true });
+    const dest = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-${path.basename(p)}`);
+    try { await fs.promises.rename(p, dest); }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
+      await fs.promises.cp(p, dest, { recursive: true });           // another drive: copy, then remove the original
+      await fs.promises.rm(p, { recursive: true, force: true });
+    }
+  },
 });
 
 export const dialog = tolerant('dialog', {

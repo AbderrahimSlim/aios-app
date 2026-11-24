@@ -61,19 +61,55 @@ export function words(cmd: string): string[][] {
   return out.filter((w) => w.length);
 }
 
+/* Commands that run another command: the guard judges the command inside, not the wrapper. */
+const PASS_THROUGH = new Set(['sudo', 'doas', 'env', 'nohup', 'time', 'command', 'exec', 'xargs', 'nice', 'timeout', 'start-process', 'start', 'call', 'runas']);
+const SHELLS = new Set(['cmd', 'powershell', 'pwsh', 'bash', 'sh', 'zsh', 'dash', 'wsl']);
+
+/** The command a wrapper runs: `sudo rm …` → `rm …`; `cmd /c rd …` and `powershell -c "…"` → their inner text. */
+export function unwrap(w: string[]): { words?: string[]; inner?: string } {
+  let i = 0;
+  for (let guard = 0; guard < 8 && i < w.length; guard++) {
+    const exe = path.basename(w[i]).toLowerCase().replace(/\.exe$/, '');
+    if (PASS_THROUGH.has(exe)) {
+      i++;
+      while (i < w.length && (/^-/.test(w[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(w[i]) || /^\d+[smhd]?$/.test(w[i]))) i++;   // flags, VAR=val, timeouts
+      continue;
+    }
+    if (SHELLS.has(exe)) {
+      const rest = w.slice(i + 1);
+      const at = rest.findIndex((a) => /^([/-](c|k|command|encodedcommand|e|ec)|-lc|-ic)$/i.test(a));
+      if (at >= 0) {
+        if (/^-(encodedcommand|e|ec)$/i.test(rest[at])) return { inner: 'ENCODED_COMMAND_REFUSED' };
+        return { inner: rest.slice(at + 1).join(' ') };
+      }
+      return { words: w.slice(i) };
+    }
+    break;
+  }
+  return { words: w.slice(i) };
+}
+
 /** Why a shell command is refused, or null. */
-export function shellVerdict(cmd: string, roots: string[]): string | null {
+export function shellVerdict(cmd: string, roots: string[], depth = 0): string | null {
+  if (depth > 3) return 'too many nested shells';
+  if (cmd.includes('ENCODED_COMMAND_REFUSED')) return 'encoded PowerShell commands are not allowed';
   const segs = words(cmd);
   for (let k = 0; k < segs.length; k++) {
-    const w = segs[k].filter((x) => x !== '|PIPE|');
+    const raw = segs[k].filter((x) => x !== '|PIPE|');
+    if (!raw.length) continue;
+    const u = unwrap(raw);
+    if (u.inner !== undefined) { const v = shellVerdict(u.inner, roots, depth + 1); if (v) return v; continue; }
+    const w = u.words || raw;
     if (!w.length) continue;
     const exe = path.basename(w[0]).toLowerCase().replace(/\.exe$/, '');
     const args = w.slice(1);
     const flags = args.filter((a) => /^-/.test(a)).join(' ').toLowerCase();
-    const paths = args.filter((a) => !/^-/.test(a));
+    /* cmd's own switches (rd /s /q) are options, not paths. */
+    const cmdStyle = ['rd', 'rmdir', 'del', 'erase'].includes(exe);
+    const paths = args.filter((a) => !/^-/.test(a) && !(cmdStyle && /^\/[a-z?]$/i.test(a)));
     if (['format', 'diskpart', 'shutdown', 'mkfs', 'dd', 'reg', 'bcdedit', 'cipher', 'vssadmin', 'takeown', 'icacls', 'net'].includes(exe)) return `${exe} is not allowed`;
     if (['stop-computer', 'restart-computer', 'format-volume', 'clear-disk', 'remove-partition'].includes(exe)) return `${w[0]} is not allowed`;
-    const recursive = /(^|\s)-(\w*r\w*|recurse)\b/i.test(flags) || /\/s\b/i.test(args.join(' '));
+    const recursive = /(^|\s)-(\w*r\w*|recurse)\b/i.test(flags) || /(^|\s)--recursive\b/i.test(flags) || /(^|\s)\/s\b/i.test(args.join(' '));
     if ((exe === 'rm' || exe === 'remove-item' || exe === 'ri' || exe === 'rd' || exe === 'rmdir' || exe === 'del' || exe === 'erase') && (recursive || exe === 'rd' || exe === 'rmdir')) {
       if (!paths.length) return 'recursive delete without a path';
       for (const p of paths) if (/[*?]/.test(p) && isRoot(path.dirname(p), roots) || isRoot(p, roots) || !inside(p, roots)) return `recursive delete outside the allowed folders: ${p}`;

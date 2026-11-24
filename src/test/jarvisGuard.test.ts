@@ -20,6 +20,19 @@ test('guard: recursive deletes only inside the roots, never a root itself', () =
   assert.equal(shellVerdict(`rm "${path.join(root, 'a.txt')}"`, roots), null, 'a plain rm is not recursive');
 });
 
+test('guard: wrappers and long flags do not hide a recursive delete (review finding)', () => {
+  assert.match(String(shellVerdict('cmd /c rd /s /q C:\\Users\\me\\Documents', roots)), /outside/);
+  assert.match(String(shellVerdict('powershell -c "Remove-Item -Recurse C:\\Users"', roots)), /outside/);
+  assert.match(String(shellVerdict('sudo rm -rf ~', roots)), /outside/);
+  assert.match(String(shellVerdict('rm --recursive /x', roots)), /outside/);
+  assert.match(String(shellVerdict('env FOO=1 rm -rf /etc', roots)), /outside/);
+  assert.match(String(shellVerdict('find . | xargs rm -rf /var', roots)), /outside/);
+  assert.match(String(shellVerdict('bash -c "rm -rf /"', roots)), /outside/);
+  assert.match(String(shellVerdict('powershell -EncodedCommand SQBFAFgA', roots)), /encoded/);
+  assert.equal(shellVerdict(`cmd /c rd /s /q "${path.join(root, 'tmp')}"`, roots), null, 'inside the roots stays allowed');
+  assert.equal(shellVerdict('powershell -c "Get-ChildItem"', roots), null);
+});
+
 test('guard: dangerous tools, force-push, download-to-shell, secrets', () => {
   assert.match(String(shellVerdict('git push --force origin main', roots)), /force/);
   assert.equal(shellVerdict('git push origin main', roots), null);

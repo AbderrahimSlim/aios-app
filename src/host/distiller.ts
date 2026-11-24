@@ -82,6 +82,7 @@ ${text}
 export class Distiller {
   private cp: Record<string, number> = {};
   private running = false;
+  private readonly failures = new Map<string, number>();
   private runs: number[] = [];
   private readonly observed: string;
   private readonly cwd: string;
@@ -132,7 +133,17 @@ export class Distiller {
       .sort((a, b) => a.mtime - b.mtime)[0];
     if (!due) return;
     this.running = true;
-    try { await this.distill(due.file, due.size); } catch (e) { activity(this.o.hostHome, 'memory', `distillation échouée : ${String(e).slice(0, 200)}`); }
+    try { await this.distill(due.file, due.size); this.failures.delete(due.file); }
+    catch (e) {
+      /* One transcript that keeps failing must not starve all the others: after 3 failures it is skipped
+         (its checkpoint moves to its end) and the operator is told. */
+      const n = (this.failures.get(due.file) || 0) + 1;
+      this.failures.set(due.file, n);
+      if (n >= 3) {
+        this.cp[due.file] = due.size; this.save(); this.failures.delete(due.file);
+        activity(this.o.hostHome, 'memory', `session ${path.basename(due.file, '.jsonl').slice(0, 8)} ignorée après 3 échecs : ${String(e).slice(0, 160)}`);
+      } else activity(this.o.hostHome, 'memory', `distillation échouée (${n}/3) : ${String(e).slice(0, 200)}`);
+    }
     finally { this.running = false; }
   }
 
@@ -188,6 +199,7 @@ export class Distiller {
       c.stderr.setEncoding('utf8').on('data', (d) => { err += d; });
       const timer = setTimeout(() => { c.kill(); reject(new Error('timeout')); }, 180_000);
       c.on('exit', (code) => { clearTimeout(timer); if (code === 0) resolve(out); else reject(new Error(`claude exited ${code}: ${err.slice(-300)}`)); });
+      c.stdin.on('error', () => undefined);       // a child that died early: EPIPE must not reach the host
       c.stdin.end(p);
     });
   }

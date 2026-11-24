@@ -34,7 +34,8 @@ export interface SchedulerDeps {
   askJarvis?: (text: string) => void;
 }
 
-const INBOX = path.join(os.homedir(), '.aios', 'spawn-inbox');
+/** The spawn inbox the command bus watches (main/commandBus inboxDir: always ~/.aios/spawn-inbox). */
+export const INBOX = path.join(os.homedir(), '.aios', 'spawn-inbox');
 const HEALTH = path.join(os.homedir(), '.aios', 'health');
 const DEFER_LIMIT_MS = 2 * 60 * 60 * 1000;
 
@@ -85,6 +86,18 @@ function iso(ms: number): string { return new Date(ms).toISOString().replace(/\.
 export class Scheduler {
   private readonly dir: string;
   private readonly deferred = new Map<string, number>();    // slug → first due time
+  /** Runs written to the inbox whose session is not live YET (the bus takes a moment): slug → when. */
+  private readonly launched = new Map<string, number>();
+  private static readonly LAUNCH_GRACE_MS = 3 * 60 * 1000;
+
+  /** Launched recently and not yet visible as a live session. */
+  private pending(): string[] {
+    const now = Date.now();
+    for (const [slug, at] of this.launched) {
+      if (now - at > Scheduler.LAUNCH_GRACE_MS || this.d.isLive(`routine-${slug}`)) this.launched.delete(slug);
+    }
+    return [...this.launched.keys()];
+  }
   private lastTick = 0;
   private gov: Governor = { maxFiveHourPct: 70, maxConcurrent: 2 };
 
@@ -111,7 +124,7 @@ export class Scheduler {
     this.loadGovernor();
     const pct = fiveHourPct();
     if (pct !== null && pct >= this.gov.maxFiveHourPct) return `quota 5 h à ${pct} % (seuil ${this.gov.maxFiveHourPct} %)`;
-    if (this.d.liveCount('routine-') >= this.gov.maxConcurrent) return `${this.gov.maxConcurrent} routines déjà en cours`;
+    if (this.d.liveCount('routine-') + this.pending().length >= this.gov.maxConcurrent) return `${this.gov.maxConcurrent} routines déjà en cours`;
     return null;
   }
 
@@ -143,7 +156,7 @@ export class Scheduler {
         this.next(r, now, 'warn', 'sautée : bloquée plus de 2 h par le régulateur');
         continue;
       }
-      if (this.d.isLive(`routine-${r.slug}`)) {
+      if (this.d.isLive(`routine-${r.slug}`) || this.pending().includes(r.slug)) {
         if (due) activity(this.d.hostHome, 'routine', `« ${r.slug} » : exécution précédente encore en cours`);
         continue;
       }
@@ -171,6 +184,7 @@ export class Scheduler {
       const tmp = path.join(INBOX, `.${stamp}-routine-${r.slug}.tmp`);
       fs.writeFileSync(tmp, JSON.stringify(req, null, 2));
       fs.renameSync(tmp, path.join(INBOX, `${stamp}-routine-${r.slug}.json`));
+      this.launched.set(r.slug, Date.now());
       activity(this.d.hostHome, 'routine', `« ${r.slug} » lancée (session routine-${r.slug})`);
       this.next(r, now, 'ok', `lancée le ${now.toLocaleString('fr-FR')}`);
     } catch (e) { this.next(r, now, 'fail', `inbox : ${String(e)}`); }

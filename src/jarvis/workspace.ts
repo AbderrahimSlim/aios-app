@@ -9,6 +9,7 @@
    mcp.json are rewritten at every start so the firewall always matches this build. */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 export interface JarvisWorkspace { dir: string; mcpConfig: string; stateFile: string; roots: string[]; }
@@ -77,7 +78,7 @@ Un message qui commence par « [Routine … ] » vient de l'ordonnanceur : fais-
 export function ensureWorkspace(hostHome: string, framework: string, guardScript: string, nodeBin: string, mcpServers: Record<string, unknown> = {}): JarvisWorkspace {
   const dir = path.join(hostHome, 'jarvis');
   const vault = path.join(framework, 'vault');
-  const inbox = path.join(path.dirname(hostHome), 'spawn-inbox');   // ~/.aios/spawn-inbox
+  const inbox = path.join(os.homedir(), '.aios', 'spawn-inbox');   // what the command bus watches, whatever AIOS_HOST_HOME is
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
 
   /* The persona is regenerated with a new build ONLY while the operator has not edited it: the hash of what
