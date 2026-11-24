@@ -72,6 +72,18 @@ async function start(): Promise<void> {
   require('../main/main');
   setImmediate(() => app.markReady());
 
+  /* Jarvis: the voice conductor (AIOS_JARVIS=0 to leave it off). */
+  if (process.env.AIOS_JARVIS !== '0') {
+    try {
+      const { ipcMain, emitAll } = await import('./electronShim');
+      const roots = (await ipcMain.handlers.get('fs:roots')?.({ sender: null })) as { framework?: string | null } | undefined;
+      if (roots?.framework) {
+        const { startJarvis } = await import('../jarvis/host');
+        startJarvis({ hostHome: HOST_HOME, framework: roots.framework, broadcast: emitAll });
+      } else console.warn('[jarvis] not started: no AIOS framework found');
+    } catch (e) { console.error('[jarvis] failed to start:', e); }
+  }
+
   const loop = bind === '127.0.0.1' || bind === 'localhost' || bind === '::1';
   console.log(`aios-host ${app.getVersion()} — http://${loop ? '127.0.0.1' : bind}:${port}/`);
   if (!loop) console.warn('WARNING: listening beyond loopback without TLS. Prefer the loopback bind behind `tailscale serve`.');

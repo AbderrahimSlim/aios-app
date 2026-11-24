@@ -379,7 +379,7 @@ export class Gateway {
     const inject = '<script src="/web/boot.js"></script>\n<script src="/web/preload.js"></script>\n<script src="/web/web-shell.js"></script>\n';
     return html
       .replace(/(<script src="csp-report\.js"><\/script>)/, `$1\n${inject}`)
-      .replace(/(<script src="app\.js"><\/script>)/, '$1\n<script src="/web/after-app.js"></script>');
+      .replace(/(<script src="app\.js"><\/script>)/, '$1\n<script src="/web/after-app.js"></script>\n<script src="/web/jarvis.js"></script>');
   }
 
   /** Facts the page needs synchronously at load (app.js reads glassShell.platform on its first line). */

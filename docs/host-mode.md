@@ -72,3 +72,32 @@ card do not see it until it is reopened.
 - File uploads for drag-and-drop (the browser never learns a dropped file's path).
 - Desktop-only surfaces are inert in host mode: tray, global quick bar, keep-awake, auto-update,
   `<webview>` browser panes, native menus.
+
+## Jarvis (plan phase 2)
+
+A voice conductor runs inside the host (`src/jarvis/`); the page gets an orb at the bottom left
+(`Alt+J`). It is one persistent Claude Code session (`claude -p` over stream-json; latest Sonnet,
+effort high, `bypassPermissions`) in its own workspace `~/.aios/host/jarvis/`, which holds its persona
+(`CLAUDE.md`, editable, kept on update) and the only settings it loads (`--setting-sources project`,
+`--strict-mcp-config`): global hooks and MCP servers are never loaded, nothing global is written. It
+answers briefly and launches AIOS agents through the spawn inbox for longer work.
+
+Firewall that still applies in bypass mode: deny rules plus the `guard` hook (`src/jarvis/guard.ts`):
+writes only inside the framework, the inbox and the workspace; shell commands parsed (recursive deletes
+outside those roots, force-push, disk/registry tools, download-into-interpreter, secrets are refused);
+for 5 minutes after reading outside content (web, mail/chat MCP), shell and PC-node actions are refused.
+It fails closed. About 120 ms per tool call on Windows (Node start-up).
+
+Voice engines (`~/.aios/host/jarvis.json`, all optional):
+
+```json
+{ "apiKey": "<Gradium key>", "voiceId": "F7Iib4MAyHIRed0x", "language": "fr", "endOfTurn": 0.8 }
+```
+
+With a key (or `GRADIUM_API_KEY`), Gradium does speech-to-text and text-to-speech on the host; without
+one, the browser's own Web Speech API does both. The device that spoke last gets the audio; every
+device sees the transcript. Anti-echo (default on) mutes the mic while Jarvis speaks; with a headset,
+untick it to interrupt Jarvis by speaking. "Stop", "tais-toi", "annule" only interrupt.
+
+Agent launches from Jarvis go through the spawn inbox, which the host fulfils by opening a pane in a
+connected page: with no page open, the request waits (headless fulfilment is plan phase 3).

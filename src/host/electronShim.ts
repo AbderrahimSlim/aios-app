@@ -56,10 +56,13 @@ export type Broadcast = (channel: string, args: unknown[]) => void;
 let broadcast: Broadcast = () => undefined;
 /** The gateway plugs itself in here; until then sends are dropped (no client can be listening). */
 export function setBroadcast(fn: Broadcast): void { broadcast = fn; }
+/** Send an event to every connected client (host-side features such as Jarvis). */
+export function emitAll(channel: string, args: unknown[]): void { broadcast(channel, args); }
 
 // ── ipcMain ────────────────────────────────────────────────────────────────────────────────────
 
-type Handler = (event: unknown, ...args: unknown[]) => unknown;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Handler = (event: any, ...args: any[]) => unknown;
 class IpcMain extends EventEmitter {
   readonly handlers = new Map<string, Handler>();
   handle(channel: string, fn: Handler): void {

@@ -161,6 +161,8 @@
     gs.openPathExternal = async () => false;
     gs.hostMode = true;
   }
+  /* Host-only features (Jarvis) talk on their own channels over the same socket. */
+  window.__aiosIpc = ipcRenderer;
 
   connect();
 })();
