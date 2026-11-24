@@ -25,11 +25,13 @@
     "demo": "npm run compile && node scripts/demo.mjs",
     "whatsnew:shot": "npm run compile && node scripts/whatsnew-shot.mjs",
     "chat:shot": "npm run compile && node scripts/chat-shot.mjs",
-    "chat:bench": "npm run compile && node scripts/chat-bench.mjs"
+    "chat:bench": "npm run compile && node scripts/chat-bench.mjs",
+    "host": "npm run compile && node out/host/main.js"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
     "@types/node": "^25.9.3",
+    "@types/ws": "^8.18.2",
     "electron": "^42.4.0",
     "electron-builder": "^26.15.2",
     "typescript": "^6.0.3"
@@ -42,7 +44,8 @@
     "@xterm/xterm": "^6.0.0",
     "electron-updater": "^6.8.9",
     "marked": "^18.0.5",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "ws": "^8.23.0"
   },
   "build": {
     "appId": "com.the-aios.app",
