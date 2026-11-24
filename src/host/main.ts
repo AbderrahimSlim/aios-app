@@ -72,6 +72,7 @@ async function start(): Promise<void> {
   require('../main/main');
   setImmediate(() => app.markReady());
 
+  let jarvis: { ask(text: string): void } | undefined;
   /* Jarvis: the voice conductor (AIOS_JARVIS=0 to leave it off). */
   if (process.env.AIOS_JARVIS !== '0') {
     try {
@@ -79,9 +80,39 @@ async function start(): Promise<void> {
       const roots = (await ipcMain.handlers.get('fs:roots')?.({ sender: null })) as { framework?: string | null } | undefined;
       if (roots?.framework) {
         const { startJarvis } = await import('../jarvis/host');
-        startJarvis({ hostHome: HOST_HOME, framework: roots.framework, broadcast: emitAll });
+        jarvis = startJarvis({ hostHome: HOST_HOME, framework: roots.framework, broadcast: emitAll });
       } else console.warn('[jarvis] not started: no AIOS framework found');
     } catch (e) { console.error('[jarvis] failed to start:', e); }
+  }
+
+  /* Phase 3: routines from the vault, the governor, and the memory distiller. */
+  {
+    const { ipcMain } = await import('./electronShim');
+    const roots = (await ipcMain.handlers.get('fs:roots')?.({ sender: null })) as { framework?: string | null } | undefined;
+    if (roots?.framework) {
+      const framework = roots.framework;
+      const { Scheduler, activity } = await import('./scheduler');
+      const sched = new Scheduler({ framework, hostHome: HOST_HOME, isLive: (n) => gw.isLive(n), liveCount: (p) => gw.liveCount(p), askJarvis: jarvis ? (t) => jarvis!.ask(t) : undefined });
+      if (process.env.AIOS_SCHEDULER !== '0') sched.start();
+      const readJson = (f: string) => { try { return JSON.parse(fs.readFileSync(path.join(HOST_HOME, f), 'utf8')); } catch { return {}; } };
+      const mem = readJson('memory.json');
+      if (process.env.AIOS_MEMORY !== '0' && mem.enabled !== false) {
+        const { Distiller } = await import('./distiller');
+        new Distiller({ framework, hostHome: HOST_HOME, idleMinutes: Number(mem.idleMinutes) || 15, maxPerHour: Number(mem.maxPerHour) || 6, maxFiveHourPct: Number(mem.maxFiveHourPct) || 70 }).start();
+      }
+      /* Optional: keep a session named "jarvis-mobile" alive, to pick up from the Claude app (Remote Control). */
+      if (readJson('jarvis.json').mobileSession === true) {
+        const keep = () => {
+          if (gw.isLive('jarvis-mobile') || sched.blocked()) return;
+          const inbox = path.join(path.dirname(HOST_HOME), 'spawn-inbox');
+          const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+          fs.writeFileSync(path.join(inbox, `${stamp}-jarvis-mobile.json`), JSON.stringify({ name: 'jarvis-mobile', task: "Tu es la session mobile de Jarvis : l'opérateur te rejoint depuis l'app Claude (Remote Control). Lis USER.md, puis attends ses messages.", tier: 'scale', effort: 'medium' }));
+          activity(HOST_HOME, 'bus', 'session « jarvis-mobile » relancée pour l’app Claude');
+        };
+        setTimeout(keep, 60_000);
+        setInterval(keep, 5 * 60_000).unref();
+      }
+    }
   }
 
   const loop = bind === '127.0.0.1' || bind === 'localhost' || bind === '::1';

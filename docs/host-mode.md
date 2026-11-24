@@ -101,3 +101,22 @@ untick it to interrupt Jarvis by speaking. "Stop", "tais-toi", "annule" only int
 
 Agent launches from Jarvis go through the spawn inbox, which the host fulfils by opening a pane in a
 connected page: with no page open, the request waits (headless fulfilment is plan phase 3).
+
+## Autonomy (plan phase 3)
+
+- **Bus requests go to one place.** "Open / send to / close a session" go to the client that acted last,
+  or are fulfilled by the host itself when no page is open (the session runs detached and is taken back
+  by name later). A session started in an untrusted folder stops on Claude Code's trust question, which
+  the host never answers: trust the AIOS folder once by opening `claude` there.
+- **Routines** are vault notes in `00 - notes/routines/` (cron `schedule`, `via: agent|jarvis`); see the
+  `_index.md` there. Health rows in `~/.aios/health/routine-<name>.json`.
+- **Governor** (`~/.aios/host/governor.json`: `maxFiveHourPct` 70, `maxConcurrent` 2): background work waits
+  while the 5-hour usage (Claude Code's status-line cache) is over the threshold.
+- **Memory distiller** (`~/.aios/host/memory.json`: `enabled`, `idleMinutes` 15, `maxPerHour` 6): a session
+  idle for 15 minutes is distilled by a one-shot Claude with no tools and no saved session; facts go to
+  `vault/00 - notes/context/observed/*.md`, one `memory:` commit per session (revert to forget).
+  Existing transcripts are never distilled retroactively.
+- **"While you were away"**: the Jarvis panel lists what routines, memory and the bus did since the device
+  last looked (`~/.aios/host/activity.jsonl`).
+- **`jarvis-mobile`** (opt-in, `"mobileSession": true` in `jarvis.json`): a session kept alive for the
+  Claude app's Remote Control.

@@ -153,9 +153,26 @@
     }
   });
 
-  ipc.invoke('jarvis:state').then((s) => {
+  /* "While you were away": what the host did since this device last looked. */
+  const lastSeen = Number(localStorage.getItem('jarvis.lastSeen') || 0);
+  const markSeen = () => localStorage.setItem('jarvis.lastSeen', String(Date.now()));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') markSeen(); });
+  window.addEventListener('beforeunload', markSeen);
+  setInterval(() => { if (document.visibilityState === 'visible') markSeen(); }, 60_000);
+
+  ipc.invoke('jarvis:state', lastSeen && Date.now() - lastSeen > 30 * 60_000 ? lastSeen : 0).then((s) => {
     state = s;
     for (const h of s.history || []) add(h.role === 'user' ? 'jv-user' : h.role === 'jarvis' ? 'jv-jarvis' : h.role === 'tool' ? 'jv-tool done' : 'jv-error', h.text);
     stateEl.textContent = `voix : ${s.stt === 'gradium' ? 'Gradium' : 'navigateur'}`;
+    const away = s.away || [];
+    if (away.length) {
+      const routines = away.filter((a) => a.kind === 'routine').length, facts = away.filter((a) => a.kind === 'memory').length;
+      const lines = away.slice(-8).map((a) => `• ${new Date(a.at).toLocaleString('fr-FR', { weekday: 'short', hour: '2-digit', minute: '2-digit' })} — ${a.text}`).join('\n');
+      add('jv-jarvis', `Pendant ton absence :\n${lines}`);
+      orb.classList.add('listening'); setTimeout(() => orb.classList.remove('listening'), 4000);
+      const said = `Pendant ton absence : ${routines} événement${routines > 1 ? 's' : ''} de routine et ${facts} mise${facts > 1 ? 's' : ''} à jour de la mémoire.`;
+      if (s.tts === 'browser' && localStorage.getItem('jarvis.speakAway') !== '0') { try { speakText(said, s.language); } catch { /* autoplay */ } }
+    }
+    markSeen();
   }).catch(() => { orb.title = 'Jarvis indisponible sur cet hôte'; orb.style.opacity = '.4'; });
 })();

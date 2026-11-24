@@ -12,6 +12,7 @@ import { Conductor, ConductorEvent } from './conductor';
 import { Speaker } from './speech';
 import { DEFAULT_VOICE, GradiumStt, GradiumTts, VoiceConfig } from './voice';
 import { ensureWorkspace } from './workspace';
+import { readActivity } from '../host/scheduler';
 
 const STOP_WORDS = /^\s*(stop|stoppe|arr[êe]te(-toi)?|annule|tais[- ]toi|silence|chut|cancel|shut up)\b[\s.!]*$/i;
 
@@ -29,7 +30,9 @@ export function loadVoiceConfig(hostHome: string): VoiceConfig {
   return cfg;
 }
 
-export function startJarvis(opts: { hostHome: string; framework: string; broadcast: (ch: string, a: unknown[]) => void }): void {
+export interface JarvisApi { ask(text: string): void; }
+
+export function startJarvis(opts: { hostHome: string; framework: string; broadcast: (ch: string, a: unknown[]) => void }): JarvisApi {
   const guardScript = path.join(__dirname, 'guard.js');
   const ws = ensureWorkspace(opts.hostHome, opts.framework, guardScript, process.execPath);
   const voice = loadVoiceConfig(opts.hostHome);
@@ -91,7 +94,11 @@ export function startJarvis(opts: { hostHome: string; framework: string; broadca
     conductor.send(text);
   };
 
-  ipcMain.handle('jarvis:state', () => ({ stt: voice.stt, tts: voice.tts, language: voice.language, busy: conductor.isBusy, history: history.slice(-60) }));
+  /* "While you were away": what happened since this device last looked (routines, memory, bus). */
+  ipcMain.handle('jarvis:state', (_e: unknown, since?: number) => ({
+    stt: voice.stt, tts: voice.tts, language: voice.language, busy: conductor.isBusy, history: history.slice(-60),
+    away: typeof since === 'number' && since > 0 ? readActivity(opts.hostHome, since).slice(-30) : [],
+  }));
   ipcMain.handle('jarvis:say', (e: { sender: FakeWebContents }, text: string) => { utter(e.sender, String(text || '').slice(0, 8000)); return true; });
   ipcMain.handle('jarvis:interrupt', (e: { sender: FakeWebContents }) => { active = e.sender; shutUp(); conductor.interrupt(); return true; });
   ipcMain.handle('jarvis:reset', () => { shutUp(); conductor.reset(); history.length = 0; toAll({ type: 'reset' }); return true; });
@@ -111,5 +118,10 @@ export function startJarvis(opts: { hostHome: string; framework: string; broadca
   ipcMain.on('jarvis:mic', (e: { sender: FakeWebContents }, b64: string) => { mics.get(e.sender)?.audio(String(b64)); });
   ipcMain.on('jarvis:micStop', (e: { sender: FakeWebContents }) => { mics.get(e.sender)?.close(); mics.delete(e.sender); });
 
+  const api: JarvisApi = {
+    /* A routine or the host speaks to Jarvis: the answer goes to whichever device is active. */
+    ask(text: string) { note({ role: 'user', text, at: Date.now() }); toAll({ type: 'user', text }); conductor.send(text); },
+  };
   console.log(`[jarvis] ready — stt ${voice.stt}, tts ${voice.tts}, workspace ${ws.dir}`);
+  return api;
 }

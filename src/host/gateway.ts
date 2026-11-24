@@ -41,6 +41,7 @@ interface Client { ws: WebSocket; deviceId: string; wc: FakeWebContents; infligh
    DETACHED and its output is kept (bounded). When a client then opens a terminal under the same
    name — the renderer's own restore and resume paths do exactly that — it gets the live pty back,
    with what it missed, instead of a second process under the same name. Nothing in app.js changes. */
+const BUS_KINDS = new Set(['terminal', 'sendByName', 'closeByName', 'focusByName']);
 const DETACHED_BUFFER_CHARS = 256 * 1024;
 /** First id given to a pty that outlived the previous host (main.ts numbers its own from 1). */
 const FOREIGN_BASE = 1_000_000;
@@ -89,8 +90,12 @@ class PtyRouter {
     if (rec) { rec.owner = c; rec.swallowRun = true; }
     return rec;
   }
-  spawned(c: Client, id: unknown, name: string): void {
+  spawned(c: Client | null, id: unknown, name: string): void {
     if (typeof id === 'number') this.ptys.set(id, { id, name, owner: c, buffer: '', swallowRun: false });
+  }
+  /** The live pty a bus request names (latest first). */
+  byName(name: string): PtyRec | undefined {
+    return [...this.ptys.values()].reverse().find((r) => r.name === name);
   }
   /** A client's request mentions a pty: only its owner may drive it. */
   owns(c: Client, id: unknown): boolean {
@@ -143,17 +148,31 @@ export class Gateway {
   private seq = 0;
   private server!: http.Server;
   private readonly router: PtyRouter;
+  /** The client that acted last: the one a bus request opens its pane in (never every client). */
+  private active: Client | null = null;
 
   constructor(private readonly opts: GatewayOptions, private readonly bridge: PtyBridge) {
     this.devices = new DeviceStore(opts.home);
     const toAll = (ch: string, a: unknown[]) => { for (const c of this.clients) this.emit(c, ch, a); };
-    setBroadcast(toAll);
+    /* Bus requests (open / send to / close a session) go to ONE client, or are fulfilled here when no
+       page is open: a spawn must never open once per browser, nor wait for someone to open one. */
+    setBroadcast((ch, a) => {
+      const p = a[0] as { kind?: string } | undefined;
+      if (ch === 'shell:intent' && p && BUS_KINDS.has(String(p.kind))) {
+        const c = this.active && this.clients.has(this.active) ? this.active : [...this.clients].pop();
+        if (c) this.emit(c, ch, a); else this.headless(p as Record<string, unknown>);
+        return;
+      }
+      toAll(ch, a);
+    });
     this.router = new PtyRouter(toAll, (c, ch, a) => this.emit(c, ch, a));
     this.router.addForeign(bridge.orphans);
   }
 
   /** Live ptys and whether a client is attached (for the CLI and health). */
   ptys(): Array<{ id: number; name: string; attached: boolean }> { return this.router.list(); }
+  isLive(name: string): boolean { return !!this.router.byName(name); }
+  liveCount(prefix: string): number { return this.router.list().filter((p) => p.name.startsWith(prefix)).length; }
 
   get store(): DeviceStore { return this.devices; }
 
@@ -202,6 +221,7 @@ export class Gateway {
     this.clients.add(c);
     this.devices.touch(deviceId);
     ws.on('message', (data, isBinary) => {
+      this.active = c;
       if (isBinary) { ws.close(1003, 'text only'); return; }
       let m;
       try { m = asClientMsg(decode(data.toString())); } catch { m = null; }
@@ -259,6 +279,36 @@ export class Gateway {
     }
     reply(true);
     return true;
+  }
+
+  /** A bus request with no page open: do what the renderer would have done. */
+  private headless(p: Record<string, unknown>): void {
+    const name = String(p.name || '');
+    const call = (ch: string, ...a: unknown[]) => ipcMain.handlers.get(ch)?.({ sender: this.router.wc }, ...a);
+    const verdict = (ok: boolean, reason: string) => ipcMain.emit('bus:sendResult', { sender: this.router.wc }, { name, ok, reason });
+    const rec = name ? this.router.byName(name) : undefined;
+    const write = (data: string) => { if (!rec) return; if (rec.foreign) rec.foreign.write(data); else ipcMain.emit('pty:write', { sender: this.router.wc }, { id: rec.id, data }); };
+    try {
+      switch (p.kind) {
+        case 'terminal': {
+          this.bridge.nextMeta = { name, cmd: p.cmd };
+          const id = call('pty:spawn', { cols: 140, rows: 40, cmd: p.cmd, cwd: p.cwd, name, bus: p.bus === true }) as number;
+          this.router.spawned(null, id, name || 'terminal');
+          /* The renderer runs the command once the terminal is sized; give the shell time to start. */
+          setTimeout(() => { void call('pty:run', { id, cmd: p.cmd }); }, 2000);
+          console.log(`[host] bus: opened "${name}" headless (pty ${id})`);
+          return;
+        }
+        case 'sendByName': {
+          if (!rec) { verdict(false, 'no live pane with that name on the host'); return; }
+          write('[200~' + String(p.text || '') + '[201~');
+          setTimeout(() => { write(String.fromCharCode(13)); verdict(true, 'delivered headless'); }, 250);
+          return;
+        }
+        case 'closeByName': if (rec) { if (rec.foreign) rec.foreign.kill(); else ipcMain.emit('pty:kill', { sender: this.router.wc }, { id: rec.id }); } return;
+        default: return;                                  // focusByName: nothing to show
+      }
+    } catch (e) { console.error('[host] headless bus request failed:', e); }
   }
 
   /** pty:spawn, routed: take back a detached live pty of the same name, or spawn one owned by this client. */
