@@ -181,7 +181,7 @@ export class Distiller {
   }
 
   private sessionName(raw: string): string | null {
-    const m = /"(?:agentName|customTitle|name)":"([^"]{1,60})"/.exec(raw);
+    const m = /"(?:customTitle|agentName)":"([^"]{1,60})"/.exec(raw);   // not "name": MCP servers and tools have one too
     return m ? m[1] : null;
   }
 
