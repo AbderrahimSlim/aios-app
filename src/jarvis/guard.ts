@@ -18,12 +18,22 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const TAINT_MS = 5 * 60 * 1000;
-const EXTERNAL = /^(WebFetch|WebSearch)$|^mcp__(google-workspace|slack|atlassian|forum|notebooklm|claude_ai_Gmail|claude_ai_)/;
+/* Tools whose results carry text someone else wrote: node results (a compromised PC) and bookkeeping data
+   (bank merchant labels) included. */
+const EXTERNAL = /^(WebFetch|WebSearch)$|^mcp__(google-workspace|slack|atlassian|forum|notebooklm|claude_ai_Gmail|claude_ai_|aios-nodes|mylittlecrm)/;
 const NODE_ACTION = /^mcp__aios-nodes__/;
 const SHELL = /^(Bash|PowerShell)$/;
 const SECRET = /(^|[\\/])(\.env(\..*)?|\.credentials\.json|credentials\.json|id_(rsa|ed25519)(\.pub)?|supervisor\.token|devices\.json|pairing-codes\.json|\.netrc|\.npmrc|\.git-credentials)$/i;
 
-interface Guard { roots: string[]; stateFile: string; }
+interface Guard {
+  roots: string[]; stateFile: string;
+  /** The vault: the only place writable while tainted. */
+  vault?: string;
+  /** Scheduled routines (notes the scheduler turns into sessions): not writable while tainted. */
+  routines?: string;
+  /** Never writable: directories whose files run code (framework hooks). */
+  protect?: string[];
+}
 
 export function norm(p: string): string {
   let s = path.resolve(String(p).replace(/^~(?=$|[\\/])/, process.env.USERPROFILE || process.env.HOME || '~'));
@@ -137,6 +147,14 @@ export function verdict(input: { tool_name?: string; tool_input?: Record<string,
     const p = String(ti.file_path || ti.notebook_path || '');
     if (!p || !inside(p, g.roots)) return `writing outside the allowed folders: ${p}`;
     if (SECRET.test(p)) return 'writing a secret file';
+    /* Files that make OTHER code run are never Jarvis's to write (security review): Claude Code settings
+       and hooks of any project, and the framework's hook scripts. */
+    if (/[\\/]\.claude[\\/]/i.test(p) || (g.protect || []).some((d) => inside(p, [d]))) return `writing a file that configures or runs code: ${p}`;
+    /* While tainted, a write is how an injection would reach execution indirectly: a spawn request in
+       the inbox, a routine the scheduler will run. Only plain vault notes stay writable. */
+    if (tainted && (!g.vault || !inside(p, [g.vault]) || (g.routines && inside(p, [g.routines])))) {
+      return 'outside content was read less than 5 minutes ago: only vault notes can be written (no agent launch, no routine)';
+    }
   }
   if (tool === 'Read' && SECRET.test(String(ti.file_path || ''))) return 'reading a secret file';
   if (SHELL.test(tool)) return shellVerdict(String(ti.command || ''), g.roots);

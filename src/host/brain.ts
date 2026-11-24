@@ -25,7 +25,7 @@ export interface BrainConfig {
   allowedGithubLogin?: string; publicBaseUrl?: string; port?: number;
 }
 interface Client { id: string; name: string; redirectUris: string[]; createdAt: number; }
-interface Pending { clientId: string; redirectUri: string; challenge: string; state: string; resource?: string; at: number; }
+interface Pending { clientId: string; redirectUri: string; challenge: string; state: string; resource?: string; at: number; nonce?: string; consented?: boolean; }
 interface Grant { clientId: string; redirectUri: string; challenge: string; login: string; at: number; }
 interface Token { hash: string; kind: 'access' | 'refresh'; clientId: string; login: string; exp: number; }
 
@@ -201,7 +201,8 @@ export class Brain {
         }); return;
       case '/register': return this.register(req, res);
       case '/authorize': return this.authorize(url, res);
-      case '/github/callback': return this.githubCallback(url, res);
+      case '/authorize/consent': return this.consent(req, res);
+      case '/github/callback': return this.githubCallback(url, res, req);
       case '/token': return this.token(req, res);
       case '/mcp': return this.mcp(req, res);
       default: res.writeHead(404); res.end();
@@ -231,8 +232,55 @@ export class Brain {
       if (q.get('state')) r.searchParams.set('state', String(q.get('state')));
       res.writeHead(302, { Location: r.toString() }); res.end(); return;
     }
-    const rid = rand(16);
-    this.pending.set(rid, { clientId: client.id, redirectUri, challenge: String(q.get('code_challenge')), state: String(q.get('state') || ''), resource: q.get('resource') || undefined, at: Date.now() });
+    /* CONSENT, bound to THIS browser (MCP spec, proxies with a static upstream client). Without it, anyone
+       could register a client, start a flow, and send the operator the link: GitHub, already authorized,
+       redirects silently and the code lands in the attacker's flow. The flow cookie (SameSite=Lax) ties
+       the consent POST and the GitHub callback to the browser that saw this page. */
+    const rid = rand(16), nonce = rand(24);
+    this.pending.set(rid, { clientId: client.id, redirectUri, challenge: String(q.get('code_challenge')), state: String(q.get('state') || ''), resource: q.get('resource') || undefined, at: Date.now(), nonce, consented: false });
+    const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+    let dest = redirectUri;
+    try { dest = new URL(redirectUri).host; } catch { /* keep */ }
+    const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>aios-brain — autoriser ?</title>
+<style>body{font:16px system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;color:#222}.w{background:#fff4e5;border-radius:8px;padding:.8rem 1rem}button{padding:.6rem 1.2rem;border-radius:8px;border:0;font-size:1rem;margin-right:.5rem;cursor:pointer}.ok{background:#2f81f7;color:#fff}.no{background:#eee}</style></head><body>
+<h1>Autoriser l'accès à ton vault ?</h1>
+<p>L'application <b>${esc(client.name)}</b> (retour vers <b>${esc(dest)}</b>, enregistrée le ${esc(new Date(client.createdAt).toLocaleString('fr-FR'))}) demande à lire ton vault, y ajouter des notes et lancer des agents AIOS.</p>
+<p class="w">Si tu n'as pas toi-même cliqué « Connecter » dans Claude à l'instant, <b>refuse</b> : quelqu'un essaie de se brancher sur ton vault.</p>
+<form method="post" action="/authorize/consent"><input type="hidden" name="rid" value="${esc(rid)}">
+<button class="ok" name="decision" value="allow">Autoriser</button><button class="no" name="decision" value="deny">Refuser</button></form></body></html>`;
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      'Set-Cookie': `aios_brain_flow=${nonce}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
+    });
+    res.end(html);
+  }
+
+  private flowCookie(req: http.IncomingMessage): string {
+    const m = /(?:^|;\s*)aios_brain_flow=([^;]+)/.exec(String(req.headers.cookie || ''));
+    return m ? m[1] : '';
+  }
+
+  private async consent(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+    const f = new URLSearchParams(await this.body(req));
+    const rid = String(f.get('rid') || '');
+    const p = this.pending.get(rid);
+    const site = String(req.headers['sec-fetch-site'] || '');
+    let originOk = site === 'same-origin';
+    try { originOk = originOk || new URL(String(req.headers.origin)).origin === new URL(this.publicUrl).origin; } catch { /* no origin */ }
+    const cookie = this.flowCookie(req);
+    if (!p || !originOk || !cookie || !p.nonce || cookie.length !== p.nonce.length || !crypto.timingSafeEqual(Buffer.from(cookie), Buffer.from(p.nonce))) {
+      this.fails.push(Date.now());
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Demande expirée ou venue d’un autre site : recommence depuis Claude.'); return;
+    }
+    if (f.get('decision') !== 'allow') {
+      this.pending.delete(rid);
+      activity(this.hostHome, 'brain', `connexion aios-brain refusée par l'opérateur (client ${p.clientId.slice(0, 8)})`);
+      const r = new URL(p.redirectUri); r.searchParams.set('error', 'access_denied'); if (p.state) r.searchParams.set('state', p.state);
+      res.writeHead(302, { Location: r.toString() }); res.end(); return;
+    }
+    p.consented = true;
     const gh = new URL('https://github.com/login/oauth/authorize');
     gh.searchParams.set('client_id', String(this.cfg.githubClientId));
     gh.searchParams.set('redirect_uri', `${this.publicUrl}/github/callback`);
@@ -241,12 +289,15 @@ export class Brain {
     res.writeHead(302, { Location: gh.toString(), 'Cache-Control': 'no-store' }); res.end();
   }
 
-  private async githubCallback(url: URL, res: http.ServerResponse): Promise<void> {
+  private async githubCallback(url: URL, res: http.ServerResponse, req: http.IncomingMessage): Promise<void> {
     const rid = String(url.searchParams.get('state') || '');
     const p = this.pending.get(rid);
     this.pending.delete(rid);
     const deny = (why: string) => { this.fails.push(Date.now()); res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(`Accès refusé : ${why}`); };
     if (!p || Date.now() - p.at > 10 * 60_000) return deny('demande expirée, recommence depuis Claude');
+    /* Only the browser that consented may finish the flow. */
+    const cookie = this.flowCookie(req);
+    if (!p.consented || !p.nonce || cookie.length !== p.nonce.length || !crypto.timingSafeEqual(Buffer.from(cookie), Buffer.from(p.nonce))) return deny('consentement absent ou donné dans un autre navigateur');
     if (this.throttled()) return deny('trop de tentatives');
     const tok = await fetch('https://github.com/login/oauth/access_token', {
       method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'aios-host' },

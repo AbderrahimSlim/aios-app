@@ -57,6 +57,22 @@ test('guard: writes stay inside the roots; the taint window pauses the shell', (
   assert.equal(verdict({ tool_name: 'Bash', tool_input: { command: 'ls' } }, g, Date.now() + 6 * 60 * 1000), null, 'the window closes');
 });
 
+test('guard: no indirect execution — settings, hooks, and while tainted the inbox and routines (review finding)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-guard-'));
+  const fw = path.join(root, 'fw'), vault = path.join(fw, 'vault'), inbox = path.join(root, 'inbox');
+  const g = { roots: [fw, inbox], stateFile: path.join(dir, 'taint.json'), vault, routines: path.join(vault, '00 - notes', 'routines'), protect: [path.join(fw, 'hooks')] };
+  const w = (p: string) => verdict({ tool_name: 'Write', tool_input: { file_path: p } }, g);
+  assert.match(String(w(path.join(fw, '.claude', 'settings.json'))), /configures or runs code/, 'never, even untainted');
+  assert.match(String(w(path.join(fw, 'hooks', 'context', 'x.py'))), /configures or runs code/);
+  assert.equal(w(path.join(inbox, '1-agent.json')), null, 'launching an agent is fine normally');
+  assert.equal(w(path.join(vault, '00 - notes', 'routines', 'r.md')), null);
+  fs.writeFileSync(g.stateFile, JSON.stringify({ externalAt: Date.now() }));
+  assert.match(String(w(path.join(inbox, '1-agent.json'))), /only vault notes/, 'no agent launch while tainted');
+  assert.match(String(w(path.join(vault, '00 - notes', 'routines', 'r.md'))), /only vault notes/, 'no routine while tainted');
+  assert.match(String(w(path.join(fw, 'README.md'))), /only vault notes/);
+  assert.equal(w(path.join(vault, '00 - notes', 'ideas', 'web-summary.md')), null, 'a plain note stays writable');
+});
+
 test('speech: markdown is reduced to words and code is never read', () => {
   assert.equal(speakable('**Fait** : voir [la note](x.md) et `npm test`.'), 'Fait : voir la note et npm test.');
   const s = new Speaker();

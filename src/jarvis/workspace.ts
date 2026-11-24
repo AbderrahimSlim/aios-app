@@ -104,7 +104,11 @@ export function ensureWorkspace(hostHome: string, framework: string, guardScript
 
   const roots = [dir, framework, inbox];
   const stateFile = path.join(hostHome, 'jarvis-taint.json');
-  fs.writeFileSync(path.join(dir, 'guard.json'), JSON.stringify({ roots, stateFile }, null, 2));
+  fs.writeFileSync(path.join(dir, 'guard.json'), JSON.stringify({
+    roots, stateFile, vault,
+    routines: path.join(vault, '00 - notes', 'routines'),
+    protect: [path.join(framework, 'hooks'), path.join(framework, 'plugins'), path.join(framework, 'mcps')],
+  }, null, 2));
 
   /* Hook commands run through a POSIX shell (Git Bash on Windows): forward slashes, quoted. */
   const q = (p: string) => `"${p.replace(/\\/g, '/')}"`;
