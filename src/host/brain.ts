@@ -182,6 +182,10 @@ export class Brain {
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = new URL(req.url || '/', 'http://brain');
     const base = this.publicUrl;
+    /* One line per request (method, path, status, client) to diagnose a connector that will not connect.
+       Never the query string or headers: they carry codes and tokens. */
+    const t0 = Date.now();
+    res.on('finish', () => console.log(`[brain] ${req.method} ${url.pathname} → ${res.statusCode} (${Date.now() - t0} ms, ${String(req.headers['user-agent'] || '?').slice(0, 40)})`));
     if (!this.configured && url.pathname !== '/') { this.json(res, 503, { error: 'aios-brain is not set up yet' }); return; }
     switch (url.pathname) {
       case '/': res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('aios-brain'); return;
