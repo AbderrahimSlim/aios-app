@@ -38,8 +38,16 @@ async function start(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const Module = require('node:module');
   const load = Module._load;
+  /* The desktop updater downloads and installs an app bundle: meaningless on a host (updated with git). */
+  const { EventEmitter } = require('node:events');
+  const updater = Object.assign(new EventEmitter(), {
+    autoDownload: false, autoInstallOnAppQuit: false, logger: null,
+    checkForUpdates: () => Promise.resolve(null), checkForUpdatesAndNotify: () => Promise.resolve(null),
+    downloadUpdate: () => Promise.resolve([]), quitAndInstall: () => undefined, setFeedURL: () => undefined,
+  });
   Module._load = function (request: string, ...rest: unknown[]) {
     if (request === 'electron') return electronModule;
+    if (request === 'electron-updater') return { autoUpdater: updater, default: { autoUpdater: updater } };
     return load.call(this, request, ...rest);
   };
 

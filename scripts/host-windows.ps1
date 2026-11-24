@@ -12,6 +12,7 @@
 #>
 param([Parameter(Position = 0)][ValidateSet('install', 'uninstall', 'status')][string]$Action = 'status')
 
+$ErrorActionPreference = 'Stop'
 $TaskName = 'AIOS Host'
 $Repo = Split-Path -Parent $PSScriptRoot
 $Entry = Join-Path $Repo 'out\host\main.js'
@@ -25,14 +26,23 @@ switch ($Action) {
     if (-not (Test-Path $Entry)) { throw "missing $Entry - run: npm run compile" }
     New-Item -ItemType Directory -Force $LogDir | Out-Null
     $log = Join-Path $LogDir 'host.log'
-    # conhost --headless: no console window for a task that runs in the user's session.
-    $cmd = "`"$node`" `"$Entry`" >> `"$log`" 2>&1"
-    $action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "--headless cmd.exe /d /s /c `"$cmd`"" -WorkingDirectory $Repo
+    # A hidden-window launcher: wscript runs cmd with window style 0 and WAITS, so the task sees the
+    # host's real exit code and its restart-on-failure applies. (conhost --headless exits at once.)
+    $cmd = "cmd.exe /d /s /c `"`"$node`" `"$Entry`" >> `"$log`" 2>&1`""
+    $vbs = Join-Path (Split-Path -Parent $LogDir) 'run-host.vbs'
+    $vbsBody = @(
+      'Set sh = CreateObject("WScript.Shell")'
+      ('sh.CurrentDirectory = "' + $Repo + '"')
+      ('rc = sh.Run("' + $cmd.Replace('"', '""') + '", 0, True)')
+      'WScript.Quit rc'
+    ) -join "`r`n"
+    Set-Content -Path $vbs -Value $vbsBody -Encoding ASCII
+    $taskAction = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "//B //NoLogo `"$vbs`"" -WorkingDirectory $Repo
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
       -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
     $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+    Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
     Write-Output "Installed and started '$TaskName'. Log: $log"
     Write-Output "Pair a device:  node `"$Entry`" pair"

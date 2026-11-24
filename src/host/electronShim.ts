@@ -171,7 +171,11 @@ function readVersion(): string {
 }
 
 class App extends EventEmitter {
-  isPackaged = false;
+  /* The host IS the operator's surface, so it announces its presence on the bus like an installed App
+     (commandBus gates that on isPackaged). The desktop auto-updater, the other isPackaged gate, is
+     replaced by an inert stand-in in host/main.ts: a host is updated with git, not an installer.
+     AIOS_HOST_DEV=1 behaves as a dev build (no presence), for a host beside a real installed App. */
+  isPackaged = process.env.AIOS_HOST_DEV !== '1';
   private readonly paths: Record<string, string> = {
     home: os.homedir(),
     appData: HOST_HOME,
