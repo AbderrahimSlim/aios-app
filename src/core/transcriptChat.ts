@@ -8,8 +8,9 @@
  * chat view never talks to Claude itself, it only reads along.
  *
  * Format, as verified against live transcripts (one JSON object per line):
- *  - `user` / `assistant` / `system` carry the conversation. Everything else (attachment,
- *    api-request, api-request-blob, last-prompt, custom-title, agent-name, mode, permission-mode,
+ *  - `user` / `assistant` / `system` carry the conversation, plus ONE kind of `attachment`: a
+ *    `queued_command` of human origin, which is how a message typed during a running turn is
+ *    recorded (see onQueued). Every other attachment and the rest (api-request, api-request-blob, last-prompt, custom-title, agent-name, mode, permission-mode,
  *    file-history-snapshot, queue-operation, …) is bookkeeping and is dropped before parsing.
  *    Those bookkeeping lines start with `{"type":…`; the three we want do NOT (their first key is
  *    `parentUuid`), which is what lets us skip the large api-request blobs without parsing them.
@@ -357,6 +358,24 @@ export function createTranscriptTracker(): TranscriptTracker {
     setTurn(!closes, u);
   }
 
+  /* A message the operator typed WHILE a turn was running is not written as a `user` line: Claude Code absorbs it into
+     the turn and records it as an `attachment` of type `queued_command` (origin human). Without this the chat never
+     showed it, though the session received it. Only a human prompt counts: a queued task notification or a command
+     queued by a program is not the operator's words. It does not open a turn: one is already running. */
+  function onQueued(d: Obj, u: TranscriptUpdate): void {
+    const a = isObj(d.attachment) ? d.attachment : undefined;
+    if (!a || a.type !== 'queued_command') return;
+    if (!isObj(a.origin) || a.origin.kind !== 'human') return;
+    if (a.commandMode !== undefined && a.commandMode !== 'prompt') return;
+    const uuid = str(d.uuid);
+    const raw = str(a.prompt);
+    if (!uuid || !raw) return;
+    const r = userText(raw);
+    if (!r || r.role !== 'user') return;
+    const ts = str(d.timestamp);
+    u.items.push({ uuid, role: 'user', text: r.text, ...(ts ? { ts } : {}) });
+  }
+
   function onUser(d: Obj, u: TranscriptUpdate): void {
     if (d.isMeta === true) return;      // skill bodies, auto-continuations, caveats: injected, not typed
     if (d.isCompactSummary === true) return;   // the summary a compaction leaves for the model: a user line nobody typed
@@ -452,6 +471,7 @@ export function createTranscriptTracker(): TranscriptTracker {
         case 'assistant': onAssistant(d, u); break;
         case 'user': onUser(d, u); break;
         case 'system': onSystem(d, u); break;
+        case 'attachment': onQueued(d, u); break;
         default: break;
       }
     } catch { /* a malformed message must not take the view down */ }

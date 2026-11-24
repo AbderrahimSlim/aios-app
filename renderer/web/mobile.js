@@ -258,7 +258,7 @@
     const chatBox = el('div', 'm-chat-box');
     $('m-chat-list').append(chatBox);
     const v = { id: null, term: null, fit: null, box, chatBox, exited: false, name,
-      items: new Map(), sid: null, watched: undefined, prompt: null, promptUsed: false, turnOpen: false,
+      items: new Map(), pending: [], sid: null, watched: undefined, prompt: null, promptUsed: false, turnOpen: false,
       stream: '', adopt: '', earlier: false, chatState: 'Connexion à la conversation…', screenTimer: 0, sidTimer: 0 };
     if (window.Terminal) {
       v.term = new window.Terminal({
@@ -372,7 +372,7 @@
       if (v.exited || !byId.has(v.id)) return;
       const sid = await findSid(v);
       if (sid && sid !== v.sid) {
-        if (v.sid) { v.items.clear(); v.chatBox.replaceChildren(); }
+        if (v.sid) { v.items.clear(); v.chatBox.replaceChildren(...v.pending.map((p) => p.node)); }
         v.sid = sid; v.chatState = '';
         await watch(v, sid);
         paintChat();
@@ -394,7 +394,7 @@
     if (!v) return;
     const stick = v === current && nearBottom();
     switch (ev.type) {
-      case 'reset': v.items.clear(); v.chatBox.replaceChildren(); v.chatState = ''; break;
+      case 'reset': v.items.clear(); v.chatBox.replaceChildren(...v.pending.map((p) => p.node)); v.chatState = ''; break;
       case 'span': v.earlier = !!ev.earlier; break;
       case 'earlier': {
         const frag = document.createDocumentFragment();
@@ -405,7 +405,9 @@
         for (const it of ev.items || []) {
           const n = renderItem(it);
           const old = v.items.get(it.uuid);
-          if (old) old.replaceWith(n); else v.chatBox.append(n);
+          settlePending(v, it);
+          /* What is still being sent stays last: a line read from the transcript goes above it. */
+          if (old) old.replaceWith(n); else if (v.pending.length) v.chatBox.insertBefore(n, v.pending[0].node); else v.chatBox.append(n);
           v.items.set(it.uuid, n);
           if (v.adopt && it.uuid === v.adopt) { v.stream = ''; v.adopt = ''; }
         }
@@ -541,6 +543,64 @@
     if (current === v) showView(v);
   });
 
+  /* The socket came back after the page was hidden (iOS drops it): the host let go of this page's terminals and chat
+     watches when the old socket closed, so every write and watch from here would be refused in silence — the chat
+     froze and what was typed vanished until the app was restarted. Take each open terminal back the way openSession
+     does (pty:spawn by name adopts the live one, never starts a second), then follow its conversation again: the watch
+     re-reads the transcript, so what was said while away appears too. A terminal another device took meanwhile is
+     left to it. */
+  ipc.on('host:reconnected', () => { void retakeAll(); });
+  async function retakeAll() {
+    let ptys;
+    try { ptys = await ipc.invoke('host:ptys'); } catch { return; }   // lost again: the next reconnect retries
+    for (const v of [...views.values()]) {
+      if (v.exited || v.id == null) continue;
+      const live = ptys.find((p) => p.id === v.id);
+      if (!live) {
+        v.exited = true; v.prompt = null; v.turnOpen = false; endChat(v);
+        if (v.term) v.term.write('\r\n\x1b[90m[session terminée]\x1b[0m\r\n');
+        if (current === v) showView(v);
+        continue;
+      }
+      if (live.attached && !live.mine) {
+        v.chatState = `« ${v.name} » a été ouverte sur un autre appareil : ferme-la là-bas puis rouvre-la ici.`;
+        if (current === v) paintChat();
+        continue;
+      }
+      let id;
+      try { id = await ipc.invoke('pty:spawn', { cols: (v.term && v.term.cols) || CHAT_COLS, rows: (v.term && v.term.rows) || CHAT_ROWS, name: v.name }); }
+      catch { continue; }
+      if (id !== v.id) { byId.delete(v.id); v.id = id; byId.set(id, v); }
+      sizePty(v);
+      v.watched = undefined;
+      await watch(v, null);
+      if (v.sid) await watch(v, v.sid);
+      if (current === v) paintChat();
+    }
+  }
+
+  /* What the operator sends shows at once, marked as sending, and gives way to the transcript's own line when it lands
+     (the chat draws only what the transcript holds, so without this a message sat invisible until then, and forever
+     if it never arrived). Still unseen after a minute → marked, so a message lost on the way is never silent. A
+     message typed during a running turn lands only at the turn's next step, hence the long wait. */
+  const PENDING_MS = 60000;
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  function addPending(v, text) {
+    const node = el('div', 'm-msg m-msg-me m-pending', text);
+    const p = { key: norm(text), node, timer: 0 };
+    p.timer = setTimeout(() => node.classList.add('m-unsent'), PENDING_MS);
+    v.pending.push(p);
+    v.chatBox.append(node);
+  }
+  function settlePending(v, item) {
+    if (!item || item.role !== 'user' || !v.pending.length) return;
+    const i = v.pending.findIndex((p) => p.key === norm(item.text));
+    if (i < 0) return;
+    const [p] = v.pending.splice(i, 1);
+    clearTimeout(p.timer);
+    p.node.remove();
+  }
+
   const KEYS = { up: '\x1b[A', down: '\x1b[B', enter: '\r', esc: '\x1b', tab: '\t', ctrlc: '\x03' };
   const write = (data) => { if (current && current.id != null && !current.exited) ipc.send('pty:write', { id: current.id, data }); };
   for (const b of document.querySelectorAll('[data-key]')) {
@@ -555,6 +615,7 @@
       toast('Claude attend d’abord ta réponse à sa question, au-dessus.'); return;
     }
     box.value = '';
+    if (mode === 'chat' && current && current.id != null && !current.exited) addPending(current, text);
     /* Pasted then submitted, as the host's headless send does: Claude Code takes it as one message. */
     write('\x1b[200~' + text + '\x1b[201~');
     setTimeout(() => write('\r'), 250);

@@ -79,11 +79,19 @@
           setTimeout(() => location.reload(), 800);
           return;
         }
+        /* Same host, new socket (iOS drops a backgrounded page's socket): the host released everything the old
+           socket held — the terminals it owned and the chat watches tied to it. Nothing here can re-take those on
+           the page's behalf, so the page is told (`host:reconnected`, local only) and re-takes what it shows. */
+        const again = epoch !== null;
         epoch = m.epoch;
         ready = true;
         retry = 0;
         status('Connecté à l’hôte', 'ok');
         while (queue.length) ws.send(encode(queue.shift()));
+        if (again) {
+          const set = listeners.get('host:reconnected');
+          if (set) for (const fn of [...set]) { try { fn({ sender: null }); } catch (err) { console.error(err); } }
+        }
         return;
       }
       if (m.t === 'res') {
@@ -106,13 +114,23 @@
       ready = false;
       /* Requests in flight will never be answered by this socket: fail them so callers do not hang. */
       for (const [id, p] of pending) { p.reject(new Error(`Error invoking remote method '${p.ch}': host connection lost`)); pending.delete(id); }
+      if (e.code === 4001 || e.code === 4002) stopped = true;
       if (e.code === 4001) { status('Appareil révoqué', 'err'); setTimeout(() => location.assign('/pair'), 1500); return; }
       if (e.code === 4002) { status('Version différente — rechargement…', 'warn'); setTimeout(() => location.reload(), 1500); return; }
       retry = Math.min(retry + 1, 6);
       status('Hôte injoignable — nouvelle tentative…', 'err');
-      setTimeout(connect, 500 * 2 ** retry);
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(connect, 500 * 2 ** retry);
     };
   }
+  let retryTimer = 0;
+  let stopped = false;                   // revoked or version change: the page is leaving, never reopen
+  /* Back in front (phone unlocked, app or tab switched back): a socket the system closed meanwhile is reopened now
+     instead of after the backoff, which could have grown to half a minute while the page was hidden. */
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !ws || stopped) return;
+    if (ws.readyState === WebSocket.CLOSED) { clearTimeout(retryTimer); retry = 0; connect(); }
+  });
 
   const ipcRenderer = {
     invoke(ch, ...a) {

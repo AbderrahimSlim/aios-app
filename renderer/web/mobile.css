@@ -154,6 +154,11 @@ button { font: inherit; }
 .m-chat-state { margin: 8px 4px; text-align: center; font-size: 13px; color: var(--muted); }
 .m-msg { max-width: 88%; padding: 10px 14px; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
 .m-msg-me { align-self: flex-end; background: var(--chat-user-bg); color: #FFFFFF; border-radius: 18px 18px 4px 18px; white-space: pre-wrap; }
+/* Sent, not yet read back from the transcript; then, after a minute, still not seen by the session. */
+.m-msg-me.m-pending { opacity: .65; }
+.m-msg-me.m-pending::after { content: 'envoi…'; display: block; margin-top: 4px; font-size: 11px; opacity: .85; }
+.m-msg-me.m-unsent { opacity: 1; background: transparent; border: 1px dashed var(--danger); color: var(--ink); }
+.m-msg-me.m-unsent::after { content: 'pas encore reçu par la session'; color: var(--danger); }
 .m-msg-claude { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-radius: 18px 18px 18px 4px; }
 .m-msg-claude p { margin: 0 0 8px; } .m-msg-claude p:last-child { margin-bottom: 0; }
 .m-msg-claude ul, .m-msg-claude ol { margin: 0 0 8px; padding-left: 20px; }

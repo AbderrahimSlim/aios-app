@@ -431,3 +431,23 @@ test('#153: a paste Claude Code wrapped in <pasted_content> shows as what was pa
   const plain = createTranscriptTracker().feed(userStr('no paste here <pasted_content> is just words'));
   assert.equal(plain.items[0].text, 'no paste here <pasted_content> is just words', 'control: only the id form Claude Code writes is unwrapped');
 });
+
+test('a message typed during a running turn (queued_command attachment) is the operator\'s line; other attachments are not', () => {
+  const queued = (prompt: unknown, extra: object = {}, attachment: object = {}): string =>
+    j({ parentUuid: null, isSidechain: false, type: 'attachment', uuid: uid(), timestamp: ts,
+      attachment: { type: 'queued_command', prompt, commandMode: 'prompt', origin: { kind: 'human' }, humanTurn: true, ...attachment }, ...extra });
+  const items = feedAll([
+    userStr('start'),
+    queued('hello while you work'),
+    queued('<system-reminder>injected</system-reminder>'),                  // nothing left once the wrapper is removed
+    queued('from a program', {}, { origin: { kind: 'task-notification' } }),
+    queued('no origin at all', {}, { origin: undefined }),
+    queued('a bang line', {}, { commandMode: 'bash' }),
+    queued('in a subagent', { isSidechain: true }),
+    j({ parentUuid: null, isSidechain: false, type: 'attachment', uuid: uid(), timestamp: ts, attachment: { type: 'hook_additional_context', content: ['not typed'] } }),
+  ]).items;
+  assert.deepEqual(byRole(items, 'user').map((i) => i.text), ['start', 'hello while you work']);
+  // negative control: the same prompt with the attachment type changed is dropped
+  const control = feedAll([queued('hello while you work', {}, { type: 'something_else' })]).items;
+  assert.equal(byRole(control, 'user').length, 0);
+});
