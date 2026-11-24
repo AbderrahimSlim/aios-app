@@ -20,7 +20,12 @@ interface Entry { role: 'user' | 'jarvis' | 'tool' | 'error'; text: string; at: 
 
 export function loadVoiceConfig(hostHome: string): VoiceConfig {
   let file: Partial<VoiceConfig> = {};
-  try { file = JSON.parse(fs.readFileSync(path.join(hostHome, 'jarvis.json'), 'utf8')); } catch { /* defaults */ }
+  /* Files written by Windows PowerShell 5.1 (Set-Content -Encoding utf8) start with a BOM, which JSON.parse refuses. */
+  const p = path.join(hostHome, 'jarvis.json');
+  if (fs.existsSync(p)) {
+    try { file = JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); }
+    catch (e) { console.error(`[jarvis] ${p} is not valid JSON (${String(e)}): voice settings ignored`); }
+  }
   const cfg: VoiceConfig = { ...DEFAULT_VOICE, ...file };
   cfg.apiKey = process.env.GRADIUM_API_KEY || file.apiKey;
   /* Gradium is the default engine when a key exists; without one, the browser's own engine. */

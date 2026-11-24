@@ -93,7 +93,7 @@ export class Scheduler {
   }
 
   private loadGovernor(): void {
-    try { this.gov = { ...this.gov, ...JSON.parse(fs.readFileSync(path.join(this.d.hostHome, 'governor.json'), 'utf8')) }; } catch { /* defaults */ }
+    try { this.gov = { ...this.gov, ...JSON.parse(fs.readFileSync(path.join(this.d.hostHome, 'governor.json'), 'utf8').replace(/^\uFEFF/, '')) }; } catch { /* defaults */ }
   }
 
   routines(): Array<Routine | { file: string; error: string }> {

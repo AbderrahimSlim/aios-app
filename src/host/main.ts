@@ -107,7 +107,7 @@ async function start(): Promise<void> {
       const { Scheduler, activity } = await import('./scheduler');
       const sched = new Scheduler({ framework, hostHome: HOST_HOME, isLive: (n) => gw.isLive(n), liveCount: (p) => gw.liveCount(p), askJarvis: jarvis ? (t) => jarvis!.ask(t) : undefined });
       if (process.env.AIOS_SCHEDULER !== '0') sched.start();
-      const readJson = (f: string) => { try { return JSON.parse(fs.readFileSync(path.join(HOST_HOME, f), 'utf8')); } catch { return {}; } };
+      const readJson = (f: string) => { try { return JSON.parse(fs.readFileSync(path.join(HOST_HOME, f), 'utf8').replace(/^\uFEFF/, '')); } catch { return {}; } };
       const mem = readJson('memory.json');
       if (process.env.AIOS_MEMORY !== '0' && mem.enabled !== false) {
         const { Distiller } = await import('./distiller');
