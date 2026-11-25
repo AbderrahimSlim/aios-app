@@ -142,9 +142,13 @@ function under(base: string, rel: string): string | null {
   return p === base || p.startsWith(base + path.sep) ? p : null;
 }
 
+/** The phone app's orb, as the browser tab icon of every page the host serves. */
+const FAVICON = '<link rel="icon" type="image/png" sizes="192x192" href="/web/icons/icon-192.png">';
+
 function pairPage(error: string, next = '/'): string {
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AIOS — appairer cet appareil</title>
+${FAVICON}
 <style>body{font:16px system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:grid;place-items:center;min-height:100vh;margin:0}
 form{background:#161b22;padding:2rem;border-radius:12px;max-width:22rem;width:90%}h1{font-size:1.2rem;margin:0 0 .5rem}
 p{color:#9da7b3;font-size:.9rem}input{font:1.4rem monospace;letter-spacing:.15em;width:100%;box-sizing:border-box;padding:.6rem;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;text-transform:uppercase}
@@ -441,6 +445,9 @@ export class Gateway {
     if (url.pathname === '/manifest.webmanifest') {
       return this.serveFile(path.join(APP_ROOT, 'renderer', 'web', 'manifest.webmanifest'), res, headers);
     }
+    if (url.pathname === '/favicon.ico') {
+      return this.serveFile(path.join(APP_ROOT, 'renderer', 'web', 'icons', 'icon-192.png'), res, headers);
+    }
     if (url.pathname.startsWith('/web/icons/')) {
       const icon = under(path.join(APP_ROOT, 'renderer', 'web', 'icons'), url.pathname.slice('/web/icons/'.length));
       if (icon && icon.endsWith('.png')) return this.serveFile(icon, res, headers);
@@ -482,7 +489,6 @@ export class Gateway {
       res.end();
       return;
     }
-    if (url.pathname === '/favicon.ico') { res.writeHead(204, headers); res.end(); return; }
     if (url.pathname.startsWith('/brain/setup') && this.brain) return this.brainSetup(req, res, url, headers);
     if (url.pathname === '/hostfile') return this.hostFile(url.searchParams.get('p') || '', res, headers);
     if (url.pathname === '/web/boot.js') return this.text(res, MIME['.js'], this.bootScript());
@@ -613,6 +619,7 @@ ${step(false, '3. Ajouter le connecteur dans Claude', `<p>claude.ai → Paramèt
     const inject = '<script src="/web/boot.js"></script>\n<script src="/web/preload.js"></script>\n<script src="/web/web-shell.js"></script>\n';
     return html
       .replace(/(<script src="csp-report\.js"><\/script>)/, `$1\n${inject}`)
+      .replace('</head>', `${FAVICON}\n</head>`)
       .replace(/(<script src="app\.js"><\/script>)/, '$1\n<script src="/web/after-app.js"></script>\n<script src="/web/jarvis.js"></script>');
   }
 
