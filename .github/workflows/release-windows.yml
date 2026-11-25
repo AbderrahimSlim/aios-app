@@ -79,7 +79,7 @@ jobs:
 
       # Same discipline as every release lane: the one place a release is cut is the one place
       # everything must pass. A directory arg, not a glob — runs identically under bash/cmd/pwsh.
-      - run: node --test --test-timeout=120000 "out/test/*.test.js"
+      - run: node --test --test-timeout=120000 --import ./out/test/isolateHome.js "out/test/*.test.js"
 
       # CodeSignTool, pinned by version AND by checksum: the release path ships to non-technical
       # users, so the signer is never "whatever SSL.com serves today". It carries its own JDK, so

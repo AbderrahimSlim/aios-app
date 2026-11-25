@@ -83,7 +83,7 @@ jobs:
 
       # Same discipline as the mac lane: the one place a release is cut is the one place
       # everything must pass. v0.7.0 was published while CI was red.
-      - run: node --test --test-timeout=120000 "out/test/*.test.js"
+      - run: node --test --test-timeout=120000 --import ./out/test/isolateHome.js "out/test/*.test.js"
 
       # Electron needs a display for verify-package's live launch check.
       - name: Build AppImage + deb, verify the packaged tree

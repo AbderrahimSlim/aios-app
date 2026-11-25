@@ -37,6 +37,10 @@ async function runHarness(bin: string, mode: 'guarded' | 'control'): Promise<Run
   const srv = await startHitServer();
   const env: NodeJS.ProcessEnv = { ...process.env, BOARD_PROBE_MODE: mode, BOARD_PROBE_PORT: String(srv.port) };
   delete env.ELECTRON_RUN_AS_NODE;   // set by some parents; it would make the binary a plain node
+  /* isolateHome.ts points USERPROFILE at a throwaway folder; Electron on Windows dies at start-up
+     (0x80000003, no output) with a profile it did not expect. This harness reads its boards from
+     AIOS_BOARDS_DIR and never the operator's ~/.aios, so the real profile is safe to hand back. */
+  if (process.env.AIOS_REAL_USERPROFILE) env.USERPROFILE = process.env.AIOS_REAL_USERPROFILE;
   const child = spawn(bin, [path.join(__dirname, 'boardIsolationHarness.js')], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '', err = '';
   child.stdout.on('data', (d) => { out += d; });

@@ -174,7 +174,9 @@ test('INVARIANT: every test invocation uses the one portable spelling', () => {
      CI but only on the one platform that happens to run the odd one out. */
   /* 0.13.0: the spelling now carries a per-test timeout, so a hung test fails instead of holding
      the job until GitHub's 6 h cancel (ciTimeouts.test.ts). One spelling, still. */
-  const want = 'node --test --test-timeout=120000 "out/test/*.test.js"';
+  /* 2026-11-25: it also loads isolateHome.js, so no test can read or rewrite the operator's own
+     ~/.aios/app.json or vault (isolateHome.ts). CI gets the same line, so a runner never differs. */
+  const want = 'node --test --test-timeout=120000 --import ./out/test/isolateHome.js "out/test/*.test.js"';
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> };
   assert.ok(pkg.scripts.test.includes(want), `package.json test script must use: ${want}`);
   for (const f of fs.readdirSync('.github/workflows').filter((n) => n.endsWith('.yml'))) {
