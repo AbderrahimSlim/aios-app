@@ -9,7 +9,7 @@ const MAX_CHARS = 24_000;
 
 /** GET routes Jarvis may read (`:id` segments match one path segment). */
 const ALLOW = [
-  'dashboard', 'anomalies', 'accounts', 'statements', 'imports', 'backup/status', 'rules',
+  'dashboard', 'anomalies', 'accounts', 'statements', 'transactions', 'imports', 'backup/status', 'rules',
   'tax/vat', 'tax/bnc', 'tax/income', 'tax/households', 'tax/households/:id', 'tax/payslip-income', 'tax/params/:id',
   'accounting/exercises', 'accounting/balance', 'accounting/comparison', 'accounting/journal', 'accounting/ledger',
   'accounting/chart', 'accounting/assets', 'accounting/allocations', 'accounting/manual-entries', 'accounting/transactions/:id',

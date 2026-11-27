@@ -104,6 +104,24 @@ async function start(): Promise<void> {
     } catch (e) { console.error('[jarvis] failed to start:', e); }
   }
 
+  /* Agent chat for local apps (MyLittleCRM's "Assistant compta"): read-only, MyLittleCRM's MCP only. */
+  if (process.env.AIOS_AGENT_CHAT !== '0') {
+    try {
+      const { ipcMain } = await import('./electronShim');
+      const roots = (await ipcMain.handlers.get('fs:roots')?.({ sender: null })) as { framework?: string | null } | undefined;
+      let url = '';
+      try { url = String(JSON.parse(fs.readFileSync(path.join(HOST_HOME, 'jarvis.json'), 'utf8').replace(/^﻿/, '')).mylittlecrm || ''); } catch { url = ''; }
+      if (roots?.framework) {
+        const { AgentChat } = await import('./agentChat');
+        gw.agentChat = new AgentChat({
+          framework: roots.framework,
+          hostHome: HOST_HOME,
+          mcpServers: url ? { mylittlecrm: { command: process.execPath, args: [path.join(__dirname, '..', 'jarvis', 'mlcMcp.js')], env: { MLC_URL: url } } } : {},
+        });
+      }
+    } catch (e) { console.error('[agent-chat] failed to start:', e); }
+  }
+
   /* Phase 3: routines from the vault, the governor, and the memory distiller. */
   {
     const { ipcMain } = await import('./electronShim');

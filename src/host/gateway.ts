@@ -170,6 +170,8 @@ export class Gateway {
   private readonly router: PtyRouter;
   /** aios-brain, when started: its setup page is served here (tailnet, paired devices). */
   brain: import('./brain').Brain | null = null;
+  /** One question to one AIOS agent, for local apps (MyLittleCRM's chat), when started. */
+  agentChat: import('./agentChat').AgentChat | null = null;
   /** Nodes (PCs running jarvis-node) and their capability requests. */
   readonly nodes = new NodeBroker();
   /** Token of the loopback-only /internal API (file readable by the operator only). */
@@ -458,6 +460,7 @@ export class Gateway {
        only the operator can read. Never reachable through tailscale serve: that arrives with a Host
        header naming the tailnet, and the token is required anyway. */
     if (url.pathname === '/internal/nodes') return this.internalNodes(req, res, headers);
+    if (url.pathname === '/internal/agent-chat') return this.internalAgentChat(req, res, headers);
     /* GitHub sends the browser back here after creating the aios-brain app. It is guarded by the single-use
        setup state, not by the device cookie (a cross-site redirect: do not rely on the cookie's SameSite). */
     if (url.pathname === '/brain/setup/done' && this.brain) {
@@ -573,14 +576,34 @@ ${step(false, '3. Ajouter le connecteur dans Claude', `<p>claude.ai → Paramèt
     res.end(html);
   }
 
-  private async internalNodes(req: http.IncomingMessage, res: http.ServerResponse, headers: Record<string, string>): Promise<void> {
+  /** The /internal API: a POST from this machine, carrying the internal token. */
+  private internalAllowed(req: http.IncomingMessage): boolean {
     const remote = String(req.socket.remoteAddress || '');
     const given = Buffer.from(String(req.headers['x-aios-internal'] || ''));
     const want = Buffer.from(this.internalToken);
     const okToken = given.length === want.length && crypto.timingSafeEqual(given, want);
-    if (!/^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(remote) || !isLoopbackHost(req.headers.host) || !okToken || req.method !== 'POST') {
-      res.writeHead(403, headers); res.end(); return;
-    }
+    return /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(remote) && isLoopbackHost(req.headers.host) && okToken && req.method === 'POST';
+  }
+
+  /** One answer of an agent, streamed as NDJSON (see agentChat.ts); stopped if the caller goes away. */
+  private async internalAgentChat(req: http.IncomingMessage, res: http.ServerResponse, headers: Record<string, string>): Promise<void> {
+    if (!this.internalAllowed(req)) { res.writeHead(403, headers); res.end(); return; }
+    if (!this.agentChat) { res.writeHead(503, headers); res.end(); return; }
+    let body = '';
+    for await (const chunk of req) { body += chunk; if (body.length > 64 * 1024) { res.writeHead(413, headers); res.end(); return; } }
+    let m: Record<string, unknown>;
+    try { m = JSON.parse(body); } catch { res.writeHead(400, headers); res.end(); return; }
+    res.writeHead(200, { ...headers, 'Content-Type': 'application/x-ndjson; charset=utf-8' });
+    const stop = this.agentChat.ask(m, (e) => {
+      if (res.writableEnded) return;
+      res.write(JSON.stringify(e) + String.fromCharCode(10));
+      if (e.type === 'done' || e.type === 'error') res.end();
+    });
+    res.on('close', () => { if (!res.writableEnded) stop(); });
+  }
+
+  private async internalNodes(req: http.IncomingMessage, res: http.ServerResponse, headers: Record<string, string>): Promise<void> {
+    if (!this.internalAllowed(req)) { res.writeHead(403, headers); res.end(); return; }
     let body = '';
     for await (const chunk of req) { body += chunk; if (body.length > 128 * 1024) { res.writeHead(413, headers); res.end(); return; } }
     let m: { op?: string; capability?: string; args?: Record<string, unknown>; target?: string; id?: string };
